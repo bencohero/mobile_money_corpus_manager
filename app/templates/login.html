@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% block content %}
+<section class="login-card card">
+  <span class="eyebrow">Accès sécurisé</span>
+  <h1>Connexion</h1>
+  <p class="muted">Connectez-vous pour gérer les enregistrements, les transcriptions et les validations du corpus.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post">
+    <label>Nom d'utilisateur</label>
+    <input name="username" required autocomplete="username">
+    <label>Mot de passe</label>
+    <input name="password" type="password" required autocomplete="current-password">
+    <div class="actions"><button>Se connecter</button></div>
+  </form>
+</section>
+{% endblock %}

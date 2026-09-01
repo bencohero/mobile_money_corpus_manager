@@ -1,0 +1,26 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <span class="eyebrow">Administration</span>
+  <h1>Participants</h1>
+  <p class="muted">Créez les profils participants et suivez le consentement ainsi que le volume d'enregistrements.</p>
+</header>
+<section class="card">
+  <h2>Nouveau participant</h2>
+  <form method="post" class="grid">
+    <div><label>Identifiant stable</label><input name="participant_code" placeholder="MOS_S001" required></div>
+    <div><label>Compte utilisateur</label><input name="username" required></div>
+    <div><label>Mot de passe initial</label><input name="password" type="password" required></div>
+    <div><label>Langue</label><input name="language" value="mos"></div>
+    <div><label>Tranche d'âge</label><input name="age_group"></div>
+    <div><label>Sexe</label><input name="gender"></div>
+    <div><label>Région</label><input name="region"></div>
+    <div><label><input type="checkbox" name="consent_obtained" value="true"> Consentement obtenu</label></div>
+    <div><label>&nbsp;</label><button>Créer</button></div>
+  </form>
+</section>
+<section class="card">
+  <h2>Liste des participants</h2>
+  <div class="table-wrap"><table><tr><th>ID</th><th>Code</th><th>Langue</th><th>Consentement</th><th>Enregistrements</th></tr>
+  {% for p in items %}<tr><td class="meta">{{p.id}}</td><td><strong>{{p.participant_code}}</strong></td><td>{{p.language}}</td><td><span class="badge">{{"Oui" if p.consent_obtained else "Non"}}</span></td><td>{{p.recordings|length}}</td></tr>{% endfor %}
+  </table></div>
+</section>{% endblock %}

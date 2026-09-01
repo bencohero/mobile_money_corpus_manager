@@ -1,0 +1,74 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      backend:
+        aliases:
+          - mobile-money-corpus-db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - miniodata:/data
+    networks:
+      backend:
+        aliases:
+          - mobile-money-corpus-minio
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - tmpaudio:/tmp/audio
+    networks:
+      - backend
+      - frontend
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=frontend
+      - traefik.http.routers.mobile-money-corpus.rule=Host(`${APP_HOST:?APP_HOST is required}`)
+      - traefik.http.routers.mobile-money-corpus.entrypoints=websecure
+      - traefik.http.routers.mobile-money-corpus.tls=true
+      - traefik.http.routers.mobile-money-corpus.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-ovhcloud}
+      - traefik.http.routers.mobile-money-corpus.service=mobile-money-corpus
+      - traefik.http.services.mobile-money-corpus.loadbalancer.server.port=8000
+
+volumes:
+  pgdata:
+  miniodata:
+  tmpaudio:
+
+networks:
+  backend:
+    internal: true
+  frontend:
+    external: true

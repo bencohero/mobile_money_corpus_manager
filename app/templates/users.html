@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <span class="eyebrow">Administration</span>
+  <h1>Utilisateurs</h1>
+  <p class="muted">Créez les comptes de transcription, validation et administration.</p>
+</header>
+<section class="card">
+  <h2>Nouvel utilisateur</h2>
+  <form method="post" class="grid">
+    <div><label>Nom d'utilisateur</label><input name="username" required></div>
+    <div><label>Mot de passe</label><input name="password" type="password" required></div>
+    <div><label>Rôle</label><select name="role"><option>TRANSCRIBER</option><option>VALIDATOR</option><option>ADMIN</option></select></div>
+    <div><label>&nbsp;</label><button>Créer</button></div>
+  </form>
+</section>
+<section class="card">
+  <h2>Comptes existants</h2>
+  <div class="table-wrap"><table><tr><th>Utilisateur</th><th>Rôle</th><th>Participant lié</th></tr>
+  {% for u in items %}<tr><td><strong>{{u.username}}</strong></td><td><span class="badge">{{u.role}}</span></td><td>{{u.participant.participant_code if u.participant else "—"}}</td></tr>{% endfor %}
+  </table></div>
+</section>{% endblock %}

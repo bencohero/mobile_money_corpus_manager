@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ title or "Corpus Manager" }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{% if user %}
+<nav class="top" aria-label="Navigation principale">
+  <span class="brand">Mobile Money Corpus</span>
+  <a href="/">Dashboard</a>
+  {% if user.role in ["PARTICIPANT","ADMIN"] %}<a href="/record">Enregistrer</a>{% endif %}
+  <a href="/recordings">Enregistrements</a>
+  {% if user.role=="ADMIN" %}<a href="/participants">Participants</a><a href="/users">Utilisateurs</a><a href="/export/recordings.csv">Exporter CSV</a>{% endif %}
+  <span>{{ user.username }} · {{ user.role }}</span>
+  <a href="/logout">Déconnexion</a>
+</nav>
+{% endif %}
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

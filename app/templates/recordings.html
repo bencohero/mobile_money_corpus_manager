@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head">
+  <span class="eyebrow">Corpus audio</span>
+  <h1>Enregistrements</h1>
+  <p class="muted">Parcourez les audios collectés et ouvrez les éléments à transcrire ou valider.</p>
+</header>
+<section class="card">
+  <div class="table-wrap"><table><tr><th>Audio</th><th>Participant</th><th>Commande</th><th>Durée</th><th>Statut</th><th>Action</th></tr>
+  {% for r in items %}<tr><td><strong>{{r.audio_id}}</strong></td><td>{{r.participant.participant_code}}</td><td>{{r.utterance.intent}}<br><span class="muted">{{r.utterance.utterance_code}}</span></td><td class="meta">{{r.duration_ms or 0}} ms</td><td><span class="badge">{{r.status}}</span></td><td><a class="btn" href="/transcribe/{{r.id}}">Ouvrir</a></td></tr>{% endfor %}
+  </table></div>
+</section>{% endblock %}
