@@ -60,7 +60,7 @@ class Utterance(Base):
 class Recording(Base):
     __tablename__ = "recordings"
     __table_args__ = (
-        UniqueConstraint("participant_id", "utterance_id", "take_number", name="uq_recording_take"),
+        UniqueConstraint("participant_id", "utterance_id", "condition", "take_number", name="uq_recording_take"),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
     audio_id: Mapped[str] = mapped_column(String(120), unique=True, index=True)

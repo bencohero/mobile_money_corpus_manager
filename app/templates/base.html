@@ -3,21 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#080b13">
   <title>{{ title or "Corpus Manager" }}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+<a class="skip-link" href="#contenu">Aller au contenu</a>
 {% if user %}
 <nav class="top" aria-label="Navigation principale">
-  <span class="brand">Mobile Money Corpus</span>
-  <a href="/">Dashboard</a>
-  {% if user.role in ["PARTICIPANT","ADMIN"] %}<a href="/record">Enregistrer</a>{% endif %}
-  <a href="/recordings">Enregistrements</a>
-  {% if user.role=="ADMIN" %}<a href="/participants">Participants</a><a href="/users">Utilisateurs</a><a href="/export/recordings.csv">Exporter CSV</a>{% endif %}
-  <span>{{ user.username }} · {{ user.role }}</span>
-  <a href="/logout">Déconnexion</a>
+  <a class="brand" href="/" aria-label="Accueil Mobile Money Corpus"><span class="brand-mark" aria-hidden="true"></span><span>Corpus<span class="brand-muted"> Studio</span></span></a>
+  <div class="nav-main">
+    <a href="/" {% if request.url.path == "/" %}class="active" aria-current="page"{% endif %}>Vue d’ensemble</a>
+    {% if user.role in ["PARTICIPANT","ADMIN"] %}<a href="/record" {% if request.url.path == "/record" %}class="active" aria-current="page"{% endif %}>Enregistrer</a>{% endif %}
+    <a href="/recordings" {% if request.url.path.startswith("/recordings") or request.url.path.startswith("/transcribe") %}class="active" aria-current="page"{% endif %}>Corpus</a>
+    {% if user.role=="ADMIN" %}<a href="/participants" {% if request.url.path == "/participants" %}class="active" aria-current="page"{% endif %}>Participants</a><a href="/users" {% if request.url.path == "/users" %}class="active" aria-current="page"{% endif %}>Équipe</a>{% endif %}
+  </div>
+  <div class="nav-actions">
+    {% if user.role=="ADMIN" %}<a class="icon-action" href="/export/recordings.csv" title="Exporter le corpus CSV" aria-label="Exporter le corpus CSV">↓ <span>CSV</span></a>{% endif %}
+    <span class="user-chip"><span class="avatar" aria-hidden="true">{{ user.username[0]|upper }}</span><span><strong>{{ user.username }}</strong><small>{{ user.role }}</small></span></span>
+    <form method="post" action="/logout" class="logout-form"><button type="submit" class="icon-action" title="Se déconnecter" aria-label="Se déconnecter">↗</button></form>
+  </div>
 </nav>
 {% endif %}
-<main>{% block content %}{% endblock %}</main>
+<main id="contenu">{% block content %}{% endblock %}</main>
+<script>
+function cookieValue(name){return document.cookie.split("; ").find(v=>v.startsWith(name+"="))?.split("=").slice(1).join("=")||""}
+document.querySelectorAll("form[method=post]").forEach(form=>{if(!form.querySelector("input[name=csrf_token]")){const input=document.createElement("input");input.type="hidden";input.name="csrf_token";input.value=decodeURIComponent(cookieValue("csrf_token"));form.prepend(input)}});
+</script>
 </body>
 </html>

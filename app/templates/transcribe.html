@@ -1,32 +1,15 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head">
-  <span class="eyebrow">Transcription</span>
-  <h1>Transcription / validation</h1>
-  <p class="muted">Écoutez l'audio, saisissez la transcription exacte puis la version normalisée.</p>
-</header>
-<section class="card">
-  <p><strong>{{rec.audio_id}}</strong> · {{rec.participant.participant_code}} · {{rec.utterance.intent}}</p>
-  <p>Scénario : {{rec.utterance.scenario_fr}}</p>
-  <audio controls src="/audio/{{rec.id}}"></audio>
-  {% if user.role in ["ADMIN","PARTICIPANT","TRANSCRIBER"] %}
-  <form method="post">
-    <label>Transcription exacte de l'audio</label>
-    <textarea name="reference_transcription" rows="4" required>{{rec.transcription.reference_transcription if rec.transcription else ""}}</textarea>
-    <label>Transcription normalisée</label>
-    <textarea name="normalized_transcription" rows="3">{{rec.transcription.normalized_transcription if rec.transcription else ""}}</textarea>
-    <div class="actions"><button>Sauvegarder la transcription</button></div>
-  </form>
-  {% endif %}
-  {% if rec.transcription %}
-  <div class="card compact"><strong>Statut :</strong> <span class="badge">{{rec.transcription.verification_status}}</span>
-  {% if rec.transcription.verifier_comment %}<p>Commentaire : {{rec.transcription.verifier_comment}}</p>{% endif %}</div>
-  {% endif %}
-  {% if user.role in ["ADMIN","VALIDATOR"] and rec.transcription %}
-  <form method="post" action="/verify/{{rec.id}}">
-    <label>Commentaire du vérificateur</label><textarea name="comment" rows="2"></textarea>
-    <div class="actions"><button name="decision" value="VERIFIED" class="ok">Valider</button>
-    <button name="decision" value="NEEDS_REVIEW" class="warn">À corriger</button>
-    <button name="decision" value="REJECTED" class="danger">Rejeter</button></div>
-  </form>
-  {% endif %}
-</section>{% endblock %}
+<header class="page-head"><span class="eyebrow">Traitement audio</span><h1>Transcription</h1><p class="muted">Écoutez attentivement la prise, transcrivez-la puis soumettez-la à validation.</p></header>
+<nav class="workflow" aria-label="Progression du traitement">
+  <div class="workflow-step done"><span>1</span><strong>Enregistré</strong></div><i></i>
+  <div class="workflow-step {{"done" if rec.transcription else "current"}}"><span>2</span><strong>Transcrit</strong></div><i></i>
+  <div class="workflow-step {{"done" if rec.status == "VERIFIED" else ("current" if rec.transcription else "")}}"><span>3</span><strong>Vérifié</strong></div>
+</nav>
+<div class="transcription-layout">
+<section class="card audio-card"><div class="record-meta"><span class="badge status-{{rec.status|lower}}">{{rec.status}}</span><span class="meta">{{rec.duration_ms or 0}} ms</span></div><h2>{{rec.audio_id}}</h2><p><strong>{{rec.participant.participant_code}}</strong> · {{rec.utterance.intent}}</p><div class="scenario-box"><small>Scénario demandé</small><p>{{rec.utterance.scenario_fr}}</p></div><audio controls src="/audio/{{rec.id}}" aria-label="Audio {{rec.audio_id}}"></audio></section>
+<section class="card editor-card">
+  {% if user.role in ["ADMIN","PARTICIPANT","TRANSCRIBER"] %}<form method="post"><div class="field"><label for="reference_transcription">Transcription exacte <span aria-hidden="true">*</span></label><small>Respectez les hésitations et les mots réellement prononcés.</small><textarea id="reference_transcription" name="reference_transcription" rows="5" required>{{rec.transcription.reference_transcription if rec.transcription else ""}}</textarea></div><div class="field"><label for="normalized_transcription">Version normalisée</label><small>Optionnel : orthographe et ponctuation normalisées.</small><textarea id="normalized_transcription" name="normalized_transcription" rows="4">{{rec.transcription.normalized_transcription if rec.transcription else ""}}</textarea></div><div class="form-actions"><button>Sauvegarder la transcription</button></div></form>{% else %}<div class="read-only"><h3>Transcription</h3><p>{{rec.transcription.reference_transcription if rec.transcription else "Aucune transcription disponible."}}</p></div>{% endif %}
+</section></div>
+{% if rec.transcription %}<section class="card review-card"><div class="section-head"><div><h2>Validation</h2><p class="muted">Statut actuel : <span class="badge status-{{rec.transcription.verification_status|lower}}">{{rec.transcription.verification_status}}</span></p></div></div>{% if rec.transcription.verifier_comment %}<div class="review-comment"><strong>Commentaire du vérificateur</strong><p>{{rec.transcription.verifier_comment}}</p></div>{% endif %}{% if user.role in ["ADMIN","VALIDATOR"] %}<form method="post" action="/verify/{{rec.id}}"><div class="field"><label for="comment">Commentaire de vérification</label><textarea id="comment" name="comment" rows="2" placeholder="Précisez les corrections attendues si nécessaire."></textarea></div><div class="actions"><button name="decision" value="VERIFIED" class="ok">✓ Valider</button><button name="decision" value="NEEDS_REVIEW" class="warn">↻ À corriger</button><button name="decision" value="REJECTED" class="danger">× Rejeter</button></div></form>{% endif %}</section>{% endif %}
+{% if user.role == "ADMIN" %}<div class="danger-zone"><div><strong>Supprimer cette prise</strong><small>Le fichier audio et sa transcription seront supprimés définitivement.</small></div><form method="post" action="/recordings/{{rec.id}}/delete" onsubmit="return confirm('Supprimer définitivement cet audio et sa transcription ?')"><button type="submit" class="danger">Supprimer l’audio</button></form></div>{% endif %}
+{% endblock %}

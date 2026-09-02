@@ -1,21 +1,4 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head">
-  <span class="eyebrow">Administration</span>
-  <h1>Utilisateurs</h1>
-  <p class="muted">Créez les comptes de transcription, validation et administration.</p>
-</header>
-<section class="card">
-  <h2>Nouvel utilisateur</h2>
-  <form method="post" class="grid">
-    <div><label>Nom d'utilisateur</label><input name="username" required></div>
-    <div><label>Mot de passe</label><input name="password" type="password" required></div>
-    <div><label>Rôle</label><select name="role"><option>TRANSCRIBER</option><option>VALIDATOR</option><option>ADMIN</option></select></div>
-    <div><label>&nbsp;</label><button>Créer</button></div>
-  </form>
-</section>
-<section class="card">
-  <h2>Comptes existants</h2>
-  <div class="table-wrap"><table><tr><th>Utilisateur</th><th>Rôle</th><th>Participant lié</th></tr>
-  {% for u in items %}<tr><td><strong>{{u.username}}</strong></td><td><span class="badge">{{u.role}}</span></td><td>{{u.participant.participant_code if u.participant else "—"}}</td></tr>{% endfor %}
-  </table></div>
-</section>{% endblock %}
+<header class="page-head split-head"><div><span class="eyebrow">Administration</span><h1>Équipe</h1><p class="muted">Gérez les comptes de transcription, validation et administration.</p></div><span class="count-chip">{{items|length}} compte{{"s" if items|length != 1 else ""}}</span></header>
+<section class="card form-card"><div class="section-head"><div><h2>Nouveau membre</h2><p class="muted">Créez un accès avec le niveau de permission approprié.</p></div></div><form method="post"><div class="form-grid three"><div class="field"><label for="username">Nom d’utilisateur <span aria-hidden="true">*</span></label><input id="username" name="username" required autocomplete="off"></div><div class="field"><label for="password">Mot de passe initial <span aria-hidden="true">*</span></label><input id="password" name="password" type="password" required autocomplete="new-password"></div><div class="field"><label for="role">Rôle</label><select id="role" name="role"><option value="TRANSCRIBER">Transcripteur</option><option value="VALIDATOR">Validateur</option><option value="ADMIN">Administrateur</option></select></div></div><div class="form-actions"><button>Créer le compte</button></div></form></section>
+<section class="card"><div class="section-head"><div><h2>Comptes actifs</h2><p class="muted">Membres autorisés à accéder à l’atelier.</p></div></div>{% if items %}<div class="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Participant lié</th></tr></thead><tbody>{% for u in items %}<tr><td><span class="identity-cell"><span class="avatar">{{u.username[0]|upper}}</span><strong>{{u.username}}</strong></span></td><td><span class="badge role-{{u.role|lower}}">{{u.role}}</span></td><td>{{u.participant.participant_code if u.participant else "—"}}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state"><span class="empty-icon">E</span><h3>Aucun compte</h3><p>Créez le premier membre de l’équipe avec le formulaire ci-dessus.</p></div>{% endif %}</section>{% endblock %}

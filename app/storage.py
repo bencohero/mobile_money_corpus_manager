@@ -30,6 +30,9 @@ def put_file(object_name: str, path: str, content_type: str):
     with open(path, "rb") as f:
         client.put_object(settings.minio_bucket, object_name, f, size, content_type=content_type)
 
+def delete_file(object_name: str):
+    client.remove_object(settings.minio_bucket, object_name)
+
 def get_bytes(object_name: str) -> bytes:
     resp = client.get_object(settings.minio_bucket, object_name)
     try:

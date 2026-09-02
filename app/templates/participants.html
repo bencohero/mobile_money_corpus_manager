@@ -1,26 +1,25 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head">
-  <span class="eyebrow">Administration</span>
-  <h1>Participants</h1>
-  <p class="muted">Créez les profils participants et suivez le consentement ainsi que le volume d'enregistrements.</p>
-</header>
-<section class="card">
-  <h2>Nouveau participant</h2>
-  <form method="post" class="grid">
-    <div><label>Identifiant stable</label><input name="participant_code" placeholder="MOS_S001" required></div>
-    <div><label>Compte utilisateur</label><input name="username" required></div>
-    <div><label>Mot de passe initial</label><input name="password" type="password" required></div>
-    <div><label>Langue</label><input name="language" value="mos"></div>
-    <div><label>Tranche d'âge</label><input name="age_group"></div>
-    <div><label>Sexe</label><input name="gender"></div>
-    <div><label>Région</label><input name="region"></div>
-    <div><label><input type="checkbox" name="consent_obtained" value="true"> Consentement obtenu</label></div>
-    <div><label>&nbsp;</label><button>Créer</button></div>
+<header class="page-head split-head"><div><span class="eyebrow">Administration</span><h1>Participants</h1><p class="muted">Gérez les profils, le consentement et le volume de collecte.</p></div><span class="count-chip">{{ items|length }} participant{{ "s" if items|length != 1 else "" }}</span></header>
+<section class="card form-card">
+  <div class="section-head"><div><h2>Nouveau participant</h2><p class="muted">Les champs marqués d’un astérisque sont obligatoires.</p></div></div>
+  <form method="post">
+    <fieldset><legend>Identité du corpus</legend><div class="form-grid">
+      <div class="field"><label for="participant_code">Identifiant stable <span aria-hidden="true">*</span></label><input id="participant_code" name="participant_code" placeholder="MOS_S001" required autocomplete="off"><small>Un code anonyme, jamais un nom civil.</small></div>
+      <div class="field"><label for="language">Langue</label><input id="language" name="language" value="mos"></div>
+    </div></fieldset>
+    <fieldset><legend>Profil de collecte</legend><div class="form-grid three">
+      <div class="field"><label for="age_group">Tranche d’âge</label><input id="age_group" name="age_group" placeholder="25–34"></div>
+      <div class="field"><label for="gender">Genre</label><input id="gender" name="gender"></div>
+      <div class="field"><label for="region">Région</label><input id="region" name="region"></div>
+    </div></fieldset>
+    <fieldset><legend>Accès et consentement</legend><div class="form-grid">
+      <div class="field"><label for="username">Compte utilisateur <span aria-hidden="true">*</span></label><input id="username" name="username" required autocomplete="off"></div>
+      <div class="field"><label for="password">Mot de passe initial <span aria-hidden="true">*</span></label><input id="password" name="password" type="password" required autocomplete="new-password"></div>
+    </div><label class="consent-box"><input type="checkbox" name="consent_obtained" value="true"><span><strong>Consentement obtenu</strong><small>Confirmez uniquement après vérification du formulaire de consentement.</small></span></label></fieldset>
+    <div class="form-actions"><button>Créer le participant</button></div>
   </form>
 </section>
-<section class="card">
-  <h2>Liste des participants</h2>
-  <div class="table-wrap"><table><tr><th>ID</th><th>Code</th><th>Langue</th><th>Consentement</th><th>Enregistrements</th></tr>
-  {% for p in items %}<tr><td class="meta">{{p.id}}</td><td><strong>{{p.participant_code}}</strong></td><td>{{p.language}}</td><td><span class="badge">{{"Oui" if p.consent_obtained else "Non"}}</span></td><td>{{p.recordings|length}}</td></tr>{% endfor %}
-  </table></div>
-</section>{% endblock %}
+<section class="card"><div class="section-head"><div><h2>Répertoire</h2><p class="muted">Profils actuellement disponibles pour la collecte.</p></div></div>
+{% if items %}<div class="table-wrap"><table><thead><tr><th>ID</th><th>Code</th><th>Langue</th><th>Consentement</th><th>Enregistrements</th></tr></thead><tbody>
+{% for p in items %}<tr><td class="meta">#{{p.id}}</td><td><strong>{{p.participant_code}}</strong></td><td>{{p.language}}</td><td><span class="badge {{"status-verified" if p.consent_obtained else "status-needs_review"}}">{{"Obtenu" if p.consent_obtained else "En attente"}}</span></td><td>{{p.recordings|length}}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<div class="empty-state"><span class="empty-icon">P</span><h3>Aucun participant</h3><p>Utilisez le formulaire ci-dessus pour créer le premier profil.</p></div>{% endif %}</section>{% endblock %}

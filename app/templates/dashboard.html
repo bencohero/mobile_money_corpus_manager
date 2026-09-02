@@ -1,18 +1,17 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head">
-  <span class="eyebrow">Vue d'ensemble</span>
-  <h1>Tableau de bord</h1>
-  <p class="muted">Suivi rapide des participants, des enregistrements et du statut de transcription.</p>
+<header class="page-head split-head">
+  <div><span class="eyebrow">Vue d’ensemble</span><h1>Bonjour, {{ user.username }}</h1><p class="muted">Voici l’état du corpus et les éléments récemment collectés.</p></div>
+  {% if user.role in ["PARTICIPANT","ADMIN"] %}<a class="btn head-action" href="/record">＋ Nouvel enregistrement</a>{% endif %}
 </header>
-<div class="grid stats-grid">
-  <div class="card stat-card"><div class="stat">{{ stats.participants }}</div><div class="muted">Participants</div></div>
-  <div class="card stat-card"><div class="stat">{{ stats.recordings }}</div><div class="muted">Enregistrements</div></div>
-  <div class="card stat-card"><div class="stat">{{ stats.transcribed }}</div><div class="muted">Transcrits</div></div>
-  <div class="card stat-card"><div class="stat">{{ stats.verified }}</div><div class="muted">Vérifiés</div></div>
+<div class="stats-grid" aria-label="Indicateurs du corpus">
+  <article class="stat-card"><div class="stat-icon purple" aria-hidden="true">P</div><div><div class="stat">{{ stats.participants }}</div><div class="stat-label">Participants</div></div></article>
+  <article class="stat-card"><div class="stat-icon blue" aria-hidden="true">A</div><div><div class="stat">{{ stats.recordings }}</div><div class="stat-label">Enregistrements</div></div></article>
+  <article class="stat-card"><div class="stat-icon amber" aria-hidden="true">T</div><div><div class="stat">{{ stats.transcribed }}</div><div class="stat-label">Transcrits</div></div></article>
+  <article class="stat-card"><div class="stat-icon green" aria-hidden="true">✓</div><div><div class="stat">{{ stats.verified }}</div><div class="stat-label">Vérifiés</div></div></article>
 </div>
 <section class="card">
-  <h2>Derniers enregistrements</h2>
-  <div class="table-wrap"><table><tr><th>Audio</th><th>Participant</th><th>Intent</th><th>Statut</th></tr>
-  {% for r in latest %}<tr><td><a href="/transcribe/{{r.id}}"><strong>{{r.audio_id}}</strong></a></td><td>{{r.participant.participant_code}}</td><td>{{r.utterance.intent}}</td><td><span class="badge">{{r.status}}</span></td></tr>{% endfor %}
-  </table></div>
+  <div class="section-head"><div><h2>Activité récente</h2><p class="muted">Les dix derniers enregistrements du corpus.</p></div><a href="/recordings">Voir tout →</a></div>
+  {% if latest %}<div class="table-wrap"><table><thead><tr><th>Audio</th><th>Participant</th><th>Intent</th><th>Statut</th></tr></thead><tbody>
+  {% for r in latest %}<tr><td><a href="/transcribe/{{r.id}}"><strong>{{r.audio_id}}</strong></a></td><td>{{r.participant.participant_code}}</td><td>{{r.utterance.intent}}</td><td><span class="badge status-{{r.status|lower}}">{{r.status}}</span></td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty-state"><span class="empty-icon" aria-hidden="true">◉</span><h3>Le corpus est encore vide</h3><p>Commencez par enregistrer une première prise audio.</p>{% if user.role in ["PARTICIPANT","ADMIN"] %}<a class="btn" href="/record">Créer un enregistrement</a>{% endif %}</div>{% endif %}
 </section>{% endblock %}

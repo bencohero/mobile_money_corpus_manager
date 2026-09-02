@@ -116,3 +116,17 @@ ALTER USER corpus WITH PASSWORD 'nouveau_mot_de_passe';
 Ne stockez pas de noms civils dans `participant_code`.
 Le consentement doit être enregistré avant toute collecte.
 Les accès MinIO/PostgreSQL ne doivent pas être exposés publiquement.
+
+
+## Paramètres de durcissement atelier
+
+Les valeurs recommandées derrière Traefik HTTPS sont :
+
+```env
+COOKIE_SECURE=true
+MAX_AUDIO_MB=50
+FFMPEG_TIMEOUT_SECONDS=60
+```
+
+Pour un test local en HTTP uniquement, utilisez temporairement `COOKIE_SECURE=false`.
+Après modification du modèle sur une installation déjà initialisée, prévoyez une migration PostgreSQL avant de conserver deux prises de même numéro avec des conditions différentes.

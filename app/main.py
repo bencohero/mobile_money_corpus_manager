@@ -1,4 +1,4 @@
-import csv, io, logging, os, subprocess, tempfile, time
+import csv, io, logging, secrets, subprocess, tempfile, time
 from pathlib import Path
 from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
@@ -7,13 +7,16 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from .config import settings
 from .db import Base, engine, get_db, SessionLocal
 from .models import User, Participant, Utterance, Recording, Transcription, AuditLog
 from .auth import verify_password, hash_password, create_token, get_current_user
-from .storage import ensure_bucket, put_file, get_bytes
+from .storage import ensure_bucket, put_file, get_bytes, delete_file
 from .seed import seed
 
 logger = logging.getLogger("mobile_money_corpus_manager")
+ALLOWED_AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/mpeg"}
+ALLOWED_CONDITIONS = {"CLEAN", "NOISY"}
 
 app = FastAPI(title="Mobile Money Corpus Manager")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -51,27 +54,46 @@ def audit(db, user, action, entity_type=None, entity_id=None, detail=None):
                     detail=detail))
     db.commit()
 
+def new_csrf_token() -> str:
+    return secrets.token_urlsafe(32)
+
+def check_csrf(request: Request, token: str | None = None):
+    supplied = token or request.headers.get("x-csrf-token")
+    expected = request.cookies.get("csrf_token")
+    if not supplied or not expected or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(403, "Requête expirée ou invalide. Rechargez la page.")
+
+def set_csrf_cookie(response: Response, token: str):
+    response.set_cookie("csrf_token", token, httponly=False, samesite="strict",
+                        secure=settings.cookie_secure, max_age=settings.access_token_minutes * 60)
+
 @app.get("/health")
 def health():
     return {"status":"ok"}
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request":request})
+    token = new_csrf_token()
+    response = templates.TemplateResponse("login.html", {"request":request, "csrf_token":token})
+    set_csrf_cookie(response, token)
+    return response
 
 @app.post("/login")
-def login(request: Request, username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+def login(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...), db: Session = Depends(get_db)):
+    check_csrf(request, csrf_token)
     user = db.query(User).filter_by(username=username).first()
     if not user or not verify_password(password, user.password_hash):
-        return templates.TemplateResponse("login.html", {"request":request,"error":"Identifiants incorrects"}, status_code=401)
+        return templates.TemplateResponse("login.html", {"request":request,"error":"Identifiants incorrects", "csrf_token":csrf_token}, status_code=401)
     token = create_token(user)
     resp = RedirectResponse("/", status_code=303)
-    resp.set_cookie("session", token, httponly=True, samesite="lax", secure=False, max_age=43200)
+    resp.set_cookie("session", token, httponly=True, samesite="strict", secure=settings.cookie_secure, max_age=settings.access_token_minutes * 60)
+    set_csrf_cookie(resp, csrf_token)
     audit(db,user,"LOGIN","user",user.id)
     return resp
 
-@app.get("/logout")
-def logout():
+@app.post("/logout")
+def logout(request: Request, csrf_token: str = Form(...)):
+    check_csrf(request, csrf_token)
     resp=RedirectResponse("/login",303)
     resp.delete_cookie("session")
     return resp
@@ -101,12 +123,13 @@ def participants(request: Request, db: Session = Depends(get_db)):
 @app.post("/participants")
 def create_participant(
     request: Request,
-    participant_code: str=Form(...), username: str=Form(...), password: str=Form(...),
+    participant_code: str=Form(...), username: str=Form(...), password: str=Form(...), csrf_token: str=Form(...),
     language: str=Form("mos"), age_group: str=Form(""), gender: str=Form(""),
     region: str=Form(""), consent_obtained: bool=Form(False),
     db: Session=Depends(get_db)
 ):
     admin=require(request,db,["ADMIN"])
+    check_csrf(request, csrf_token)
     if db.query(Participant).filter_by(participant_code=participant_code).first():
         raise HTTPException(400,"participant_code déjà utilisé")
     if db.query(User).filter_by(username=username).first():
@@ -143,12 +166,17 @@ async def upload_recording(
     db: Session=Depends(get_db)
 ):
     user=require(request,db,["PARTICIPANT","ADMIN"])
+    check_csrf(request)
     pid=user.participant_id if user.role=="PARTICIPANT" else participant_id
     if not pid: raise HTTPException(400,"participant requis")
     participant=db.get(Participant,pid)
     utterance=db.get(Utterance,utterance_id)
     if not participant or not utterance: raise HTTPException(404)
     if not participant.consent_obtained: raise HTTPException(403,"consentement absent")
+    if condition not in ALLOWED_CONDITIONS: raise HTTPException(400,"condition invalide")
+    if take_number < 1 or take_number > 999: raise HTTPException(400,"numéro de prise invalide")
+    content_type=(audio.content_type or "").split(";", 1)[0].lower()
+    if content_type not in ALLOWED_AUDIO_TYPES: raise HTTPException(415,"format audio non accepté")
     audio_id=f"{participant.participant_code}_{utterance.utterance_code}_{condition}_T{take_number:02d}"
     if db.query(Recording).filter_by(audio_id=audio_id).first():
         raise HTTPException(409,"Cette prise existe déjà")
@@ -157,14 +185,24 @@ async def upload_recording(
     with tempfile.TemporaryDirectory() as td:
         raw=Path(td)/f"raw{suffix}"
         wav=Path(td)/"normalized.wav"
-        raw.write_bytes(await audio.read())
-        subprocess.run(["ffmpeg","-y","-loglevel","error","-i",str(raw),"-ar","16000","-ac","1","-c:a","pcm_s16le",str(wav)],check=True)
+        size = 0
+        with raw.open("wb") as target:
+            while chunk := await audio.read(1024 * 1024):
+                size += len(chunk)
+                if size > settings.max_audio_mb * 1024 * 1024:
+                    raise HTTPException(413, f"audio limité à {settings.max_audio_mb} Mo")
+                target.write(chunk)
+        if size == 0: raise HTTPException(400,"fichier audio vide")
+        try:
+            subprocess.run(["ffmpeg","-y","-loglevel","error","-i",str(raw),"-ar","16000","-ac","1","-c:a","pcm_s16le",str(wav)],check=True,timeout=settings.ffmpeg_timeout_seconds)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            raise HTTPException(422,"audio illisible ou conversion trop longue")
         raw_obj=f"raw/{participant.participant_code}/{audio_id}{suffix}"
         wav_obj=f"normalized/{participant.participant_code}/{audio_id}.wav"
         put_file(raw_obj,str(raw),audio.content_type or "application/octet-stream")
         put_file(wav_obj,str(wav),"audio/wav")
         # duration
-        p=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","default=nw=1:nk=1",str(wav)],capture_output=True,text=True)
+        p=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","default=nw=1:nk=1",str(wav)],capture_output=True,text=True,check=True,timeout=10)
         duration_ms=int(float(p.stdout.strip() or "0")*1000)
 
     rec=Recording(audio_id=audio_id,participant_id=pid,utterance_id=utterance_id,take_number=take_number,
@@ -204,14 +242,17 @@ def transcribe_page(recording_id:int, request:Request, db:Session=Depends(get_db
 def save_transcription(
     recording_id:int, request:Request,
     reference_transcription:str=Form(...),
-    normalized_transcription:str=Form(""),
+    normalized_transcription:str=Form(""), csrf_token:str=Form(...),
     db:Session=Depends(get_db)
 ):
     user=require(request,db,["ADMIN","PARTICIPANT","TRANSCRIBER"])
+    check_csrf(request, csrf_token)
     rec=db.get(Recording,recording_id)
     if not rec: raise HTTPException(404)
     if user.role=="PARTICIPANT" and rec.participant_id!=user.participant_id:
         raise HTTPException(403)
+    if rec.status == "VERIFIED" and user.role != "ADMIN":
+        raise HTTPException(409,"Une transcription validée doit être rouverte par un administrateur")
     tr=rec.transcription
     if tr:
         tr.reference_transcription=reference_transcription
@@ -229,10 +270,11 @@ def save_transcription(
 
 @app.post("/verify/{recording_id}")
 def verify(
-    recording_id:int, request:Request, decision:str=Form(...), comment:str=Form(""),
+    recording_id:int, request:Request, decision:str=Form(...), comment:str=Form(""), csrf_token:str=Form(...),
     db:Session=Depends(get_db)
 ):
     user=require(request,db,["ADMIN","VALIDATOR"])
+    check_csrf(request, csrf_token)
     rec=db.get(Recording,recording_id)
     if not rec or not rec.transcription: raise HTTPException(404)
     rec.transcription.verifier_id=user.id
@@ -257,14 +299,36 @@ def users_page(request:Request, db:Session=Depends(get_db)):
     return templates.TemplateResponse("users.html",{"request":request,"user":user,"items":items})
 
 @app.post("/users")
-def create_user(request:Request,username:str=Form(...),password:str=Form(...),role:str=Form(...),db:Session=Depends(get_db)):
+def create_user(request:Request,username:str=Form(...),password:str=Form(...),role:str=Form(...),csrf_token:str=Form(...),db:Session=Depends(get_db)):
     admin=require(request,db,["ADMIN"])
+    check_csrf(request, csrf_token)
     if role not in ["ADMIN","TRANSCRIBER","VALIDATOR"]: raise HTTPException(400)
     if db.query(User).filter_by(username=username).first(): raise HTTPException(400,"username déjà utilisé")
     u=User(username=username,password_hash=hash_password(password),role=role)
     db.add(u);db.commit()
     audit(db,admin,"CREATE_USER","user",u.id,role)
     return RedirectResponse("/users",303)
+
+@app.post("/recordings/{recording_id}/delete")
+def delete_recording(recording_id: int, request: Request, csrf_token: str = Form(...), db: Session = Depends(get_db)):
+    admin = require(request, db, ["ADMIN"])
+    check_csrf(request, csrf_token)
+    rec = db.get(Recording, recording_id)
+    if not rec:
+        raise HTTPException(404, "Enregistrement introuvable")
+    try:
+        delete_file(rec.raw_object)
+        delete_file(rec.wav_object)
+    except Exception:
+        logger.exception("Unable to delete MinIO objects for recording %s", recording_id)
+        raise HTTPException(502, "Suppression du fichier audio impossible")
+    audio_id = rec.audio_id
+    if rec.transcription:
+        db.delete(rec.transcription)
+    db.delete(rec)
+    db.commit()
+    audit(db, admin, "DELETE_RECORDING", "recording", recording_id, audio_id)
+    return RedirectResponse("/recordings", 303)
 
 @app.get("/export/recordings.csv")
 def export_recordings(request:Request,db:Session=Depends(get_db)):

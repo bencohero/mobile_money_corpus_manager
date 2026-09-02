@@ -1,11 +1,6 @@
 {% extends "base.html" %}{% block content %}
-<header class="page-head">
-  <span class="eyebrow">Corpus audio</span>
-  <h1>Enregistrements</h1>
-  <p class="muted">Parcourez les audios collectés et ouvrez les éléments à transcrire ou valider.</p>
-</header>
-<section class="card">
-  <div class="table-wrap"><table><tr><th>Audio</th><th>Participant</th><th>Commande</th><th>Durée</th><th>Statut</th><th>Action</th></tr>
-  {% for r in items %}<tr><td><strong>{{r.audio_id}}</strong></td><td>{{r.participant.participant_code}}</td><td>{{r.utterance.intent}}<br><span class="muted">{{r.utterance.utterance_code}}</span></td><td class="meta">{{r.duration_ms or 0}} ms</td><td><span class="badge">{{r.status}}</span></td><td><a class="btn" href="/transcribe/{{r.id}}">Ouvrir</a></td></tr>{% endfor %}
-  </table></div>
-</section>{% endblock %}
+<header class="page-head split-head"><div><span class="eyebrow">Corpus audio</span><h1>Enregistrements</h1><p class="muted">Écoutez, transcrivez et validez les prises collectées.</p></div>{% if user.role in ["PARTICIPANT","ADMIN"] %}<a class="btn head-action" href="/record">＋ Nouvelle prise</a>{% endif %}</header>
+<section class="card"><div class="section-head"><div><h2>Toutes les prises</h2><p class="muted">{{ items|length }} élément{{ "s" if items|length != 1 else "" }} dans cette vue.</p></div></div>
+{% if items %}<div class="table-wrap"><table><thead><tr><th>Audio</th><th>Participant</th><th>Commande</th><th>Durée</th><th>Statut</th><th><span class="sr-only">Action</span></th></tr></thead><tbody>
+{% for r in items %}<tr><td><strong>{{r.audio_id}}</strong><br><span class="meta">Prise {{r.take_number}} · {{r.condition}}</span></td><td>{{r.participant.participant_code}}</td><td>{{r.utterance.intent}}<br><span class="muted">{{r.utterance.utterance_code}}</span></td><td class="meta">{{"%.1f"|format((r.duration_ms or 0) / 1000)}} s</td><td><span class="badge status-{{r.status|lower}}">{{r.status}}</span></td><td class="row-action"><div class="row-actions"><a class="btn secondary" href="/transcribe/{{r.id}}">Ouvrir →</a>{% if user.role == "ADMIN" %}<form method="post" action="/recordings/{{r.id}}/delete" class="delete-form" onsubmit="return confirm('Supprimer définitivement cet audio et sa transcription ?')"><button type="submit" class="danger" title="Supprimer {{r.audio_id}}" aria-label="Supprimer {{r.audio_id}}">×</button></form>{% endif %}</div></td></tr>{% endfor %}
+</tbody></table></div>{% else %}<div class="empty-state"><span class="empty-icon">◉</span><h3>Aucun enregistrement</h3><p>Les prises audio apparaîtront ici après leur envoi.</p>{% if user.role in ["PARTICIPANT","ADMIN"] %}<a class="btn" href="/record">Créer la première prise</a>{% endif %}</div>{% endif %}</section>{% endblock %}

@@ -12,6 +12,9 @@ class Settings(BaseSettings):
 
     jwt_secret: str
     access_token_minutes: int = 720
+    cookie_secure: bool = True
+    max_audio_mb: int = 50
+    ffmpeg_timeout_seconds: int = 60
 
     minio_endpoint: str = "minio:9000"
     minio_root_user: str | None = None
