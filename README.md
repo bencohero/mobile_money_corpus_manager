@@ -130,3 +130,10 @@ FFMPEG_TIMEOUT_SECONDS=60
 
 Pour un test local en HTTP uniquement, utilisez temporairement `COOKIE_SECURE=false`.
 Après modification du modèle sur une installation déjà initialisée, prévoyez une migration PostgreSQL avant de conserver deux prises de même numéro avec des conditions différentes.
+
+## P0-A
+
+Voir `docs/P0A_IMPLEMENTATION.md`, `docs/BACKUP_RESTORE.md` et `docs/INCIDENT_RUNBOOK.md` pour la configuration stricte, les migrations, la reconciliation et les procedures d exploitation. Les sauvegardes doivent etre stockees hors volumes applicatifs.
+
+## P0-A.2
+Validation d integration et reprise: voir docs/P0A2_INTEGRATION_RECOVERY.md et RAPPORT_VALIDATION_P0A2.md.

@@ -1,4 +1,5 @@
-import csv, io, logging, secrets, subprocess, tempfile, time
+import csv, io, logging, secrets, subprocess, tempfile, time, hashlib, uuid, wave
+from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
@@ -6,17 +7,43 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from .config import settings
 from .db import Base, engine, get_db, SessionLocal
 from .models import User, Participant, Utterance, Recording, Transcription, AuditLog
 from .auth import verify_password, hash_password, create_token, get_current_user
-from .storage import ensure_bucket, put_file, get_bytes, delete_file
+from .storage import ensure_bucket, put_file, get_bytes, delete_file, stat_file, list_files
 from .seed import seed
 
 logger = logging.getLogger("mobile_money_corpus_manager")
 ALLOWED_AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/mpeg"}
 ALLOWED_CONDITIONS = {"CLEAN", "NOISY"}
+CONVERSION_SLOTS = __import__("threading").BoundedSemaphore(settings.max_concurrent_conversions)
+class ConversionSaturated(Exception): pass
+def run_audio_command(args, **kwargs):
+    if not CONVERSION_SLOTS.acquire(blocking=False):
+        raise ConversionSaturated()
+    try:
+        return subprocess.run(args, shell=False, **kwargs)
+    finally:
+        CONVERSION_SLOTS.release()
+
+def operation_id(request):
+    return request.headers.get("x-request-id") or uuid.uuid4().hex
+
+def audio_error(request, status_code, message):
+    op = operation_id(request)
+    logger.warning("audio operation failed", extra={"operation_id": op, "status_code": status_code})
+    return HTTPException(status_code, message, headers={"X-Operation-ID": op})
+
+def compensate_uploaded(uploaded, request):
+    for object_name in uploaded:
+        try:
+            delete_file(object_name)
+        except Exception:
+            logger.exception("MinIO compensation failed", extra={"operation_id": operation_id(request)})
+
 
 app = FastAPI(title="Mobile Money Corpus Manager")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -26,7 +53,9 @@ templates = Jinja2Templates(directory="app/templates")
 def startup():
     for _ in range(20):
         try:
-            Base.metadata.create_all(engine)
+
+            if settings.app_env == "development":
+                Base.metadata.create_all(engine)
             ensure_bucket()
             with SessionLocal() as db:
                 seed(db)
@@ -68,8 +97,14 @@ def set_csrf_cookie(response: Response, token: str):
                         secure=settings.cookie_secure, max_age=settings.access_token_minutes * 60)
 
 @app.get("/health")
-def health():
-    return {"status":"ok"}
+def health(db: Session = Depends(get_db)):
+    try:
+        db.execute(__import__("sqlalchemy").text("SELECT 1"))
+        stat_file(settings.minio_bucket + "/.healthcheck") if False else None
+        return {"status": "ok"}
+    except Exception:
+        logger.exception("Health check failed")
+        raise HTTPException(503, "Service indisponible")
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
@@ -194,20 +229,54 @@ async def upload_recording(
                 target.write(chunk)
         if size == 0: raise HTTPException(400,"fichier audio vide")
         try:
-            subprocess.run(["ffmpeg","-y","-loglevel","error","-i",str(raw),"-ar","16000","-ac","1","-c:a","pcm_s16le",str(wav)],check=True,timeout=settings.ffmpeg_timeout_seconds)
+            run_audio_command(["ffmpeg","-y","-loglevel","error","-i",str(raw),"-ar","16000","-ac","1","-c:a","pcm_s16le",str(wav)],check=True,timeout=settings.ffmpeg_timeout_seconds,capture_output=True)
+        except ConversionSaturated:
+            raise HTTPException(429,"Le traitement audio est momentanement sature. Reessayez.")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             raise HTTPException(422,"audio illisible ou conversion trop longue")
+        try:
+            with wave.open(str(wav), "rb") as normalized:
+                if (normalized.getnchannels(), normalized.getsampwidth(), normalized.getframerate(), normalized.getnframes()) != (1, 2, 16000, normalized.getnframes()) or normalized.getnframes() <= 0:
+                    raise ValueError("invalid normalized wav")
+        except (wave.Error, OSError, EOFError, ValueError):
+            raise audio_error(request, 422, "audio converti invalide")
         raw_obj=f"raw/{participant.participant_code}/{audio_id}{suffix}"
         wav_obj=f"normalized/{participant.participant_code}/{audio_id}.wav"
-        put_file(raw_obj,str(raw),audio.content_type or "application/octet-stream")
-        put_file(wav_obj,str(wav),"audio/wav")
-        # duration
-        p=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","default=nw=1:nk=1",str(wav)],capture_output=True,text=True,check=True,timeout=10)
-        duration_ms=int(float(p.stdout.strip() or "0")*1000)
+        uploaded=[]
+        try:
+            put_file(raw_obj,str(raw),audio.content_type or "application/octet-stream"); uploaded.append(raw_obj)
+            put_file(wav_obj,str(wav),"audio/wav"); uploaded.append(wav_obj)
+        except Exception:
+            compensate_uploaded(uploaded, request)
+            db.rollback()
+            logger.exception("MinIO upload failed", extra={"operation_id": operation_id(request)})
+            raise HTTPException(502,"Stockage audio temporairement indisponible")
+        try:
+            p=run_audio_command(["ffprobe","-v","error","-show_entries","format=duration","-of","default=nw=1:nk=1",str(wav)],capture_output=True,text=True,check=True,timeout=settings.ffprobe_timeout_seconds)
+            duration_ms=int(float(p.stdout.strip() or "0")*1000)
+            if not settings.min_audio_duration_seconds*1000 <= duration_ms <= settings.max_audio_duration_seconds*1000:
+                raise ValueError("duration out of limits")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
+            compensate_uploaded(uploaded, request)
+            db.rollback()
+            raise audio_error(request, 422, "audio illisible, durée invalide ou conversion trop longue")
+        raw_bytes, wav_bytes = raw.read_bytes(), wav.read_bytes()
+        raw_sha, wav_sha, wav_size = hashlib.sha256(raw_bytes).hexdigest(), hashlib.sha256(wav_bytes).hexdigest(), len(wav_bytes)
 
     rec=Recording(audio_id=audio_id,participant_id=pid,utterance_id=utterance_id,take_number=take_number,
-                  condition=condition,raw_object=raw_obj,wav_object=wav_obj,duration_ms=duration_ms)
-    db.add(rec); db.commit()
+                  condition=condition,raw_object=raw_obj,wav_object=wav_obj,duration_ms=duration_ms,sync_status="READY",raw_size_bytes=size,wav_size_bytes=wav_size,raw_sha256=raw_sha,wav_sha256=wav_sha,finalized_at=datetime.utcnow())
+    db.add(rec)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        compensate_uploaded(uploaded, request)
+        raise HTTPException(409,"Cette prise existe déjà")
+    except Exception:
+        db.rollback()
+        compensate_uploaded(uploaded, request)
+        logger.exception("PostgreSQL commit failed", extra={"operation_id": operation_id(request)})
+        raise HTTPException(502,"Enregistrement audio temporairement indisponible")
     audit(db,user,"CREATE_RECORDING","recording",rec.id,audio_id)
     return {"ok":True,"audio_id":audio_id,"recording_id":rec.id}
 
@@ -320,6 +389,7 @@ def delete_recording(recording_id: int, request: Request, csrf_token: str = Form
         delete_file(rec.raw_object)
         delete_file(rec.wav_object)
     except Exception:
+        db.rollback()
         logger.exception("Unable to delete MinIO objects for recording %s", recording_id)
         raise HTTPException(502, "Suppression du fichier audio impossible")
     audio_id = rec.audio_id

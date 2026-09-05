@@ -1,5 +1,8 @@
 .env
 AUDIT_TECHNIQUE_MOBILE_MONEY_CORPUS_MANAGER.md
+AUDIT_*.md
 BILAN*.md
 AUDIT_*.md
 prompt_*.md
+RAPPORT_*.md
+scripts/

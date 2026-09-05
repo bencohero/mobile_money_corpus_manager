@@ -1,0 +1,151 @@
+name: mobile-money-corpus-p0a2-test
+services:
+  db-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: p0a2_test
+      POSTGRES_USER: p0a2_user
+      POSTGRES_PASSWORD: p0a2_password_only
+    networks: [p0a2-test]
+    volumes:
+      - p0a2-test-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U p0a2_user -d p0a2_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  minio-test:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: p0a2_minio
+      MINIO_ROOT_PASSWORD: p0a2_minio_password_only
+    networks: [p0a2-test]
+    volumes:
+      - p0a2-test-miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  db-restore:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: p0a2_restore
+      POSTGRES_USER: p0a2_restore_user
+      POSTGRES_PASSWORD: p0a2_restore_password_only
+    networks: [p0a2-test]
+    volumes:
+      - p0a2-test-restore-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U p0a2_restore_user -d p0a2_restore"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  minio-restore:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: p0a2_restore_minio
+      MINIO_ROOT_PASSWORD: p0a2_restore_minio_password_only
+    networks: [p0a2-test]
+    volumes:
+      - p0a2-test-restore-miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  app-test:
+    build: {context: ., target: test}
+    environment:
+      APP_ENV: test
+      DATABASE_URL: postgresql+psycopg://p0a2_user:p0a2_password_only@db-test:5432/p0a2_test
+      POSTGRES_DB: p0a2_test
+      POSTGRES_USER: p0a2_user
+      POSTGRES_PASSWORD: p0a2_password_only
+      POSTGRES_HOST: db-test
+      JWT_SECRET: p0a2-test-jwt-secret-not-production-32-chars
+      COOKIE_SECURE: "false"
+      MINIO_ENDPOINT: minio-test:9000
+      MINIO_ROOT_USER: p0a2_minio
+      MINIO_ROOT_PASSWORD: p0a2_minio_password_only
+      MINIO_ACCESS_KEY: p0a2_minio
+      MINIO_SECRET_KEY: p0a2_minio_password_only
+      MINIO_BUCKET: p0a2-test-bucket
+      ADMIN_PASSWORD: p0a2-admin-password-only
+      PYTHONPATH: /app
+    depends_on:
+      db-test: {condition: service_healthy}
+      minio-test: {condition: service_healthy}
+    networks: [p0a2-test]
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  test:
+    build: {context: ., target: test}
+    environment:
+      APP_ENV: test
+      DATABASE_URL: postgresql+psycopg://p0a2_user:p0a2_password_only@db-test:5432/p0a2_test
+      POSTGRES_DB: p0a2_test
+      POSTGRES_USER: p0a2_user
+      POSTGRES_PASSWORD: p0a2_password_only
+      POSTGRES_HOST: db-test
+      JWT_SECRET: p0a2-test-jwt-secret-not-production-32-chars
+      COOKIE_SECURE: "false"
+      MINIO_ENDPOINT: minio-test:9000
+      MINIO_ROOT_USER: p0a2_minio
+      MINIO_ROOT_PASSWORD: p0a2_minio_password_only
+      MINIO_ACCESS_KEY: p0a2_minio
+      MINIO_SECRET_KEY: p0a2_minio_password_only
+      MINIO_BUCKET: p0a2-test-bucket
+      ADMIN_PASSWORD: p0a2-admin-password-only
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPATH: /app
+    depends_on:
+      app-test: {condition: service_healthy}
+    networks: [p0a2-test]
+    command: ["pytest", "-q", "-ra"]
+  tools:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    environment:
+      PGHOST: db-test
+      PGPASSWORD: p0a2_password_only
+      POSTGRES_DB: p0a2_test
+      POSTGRES_USER: p0a2_user
+      MINIO_ENDPOINT: http://minio-test:9000
+      MINIO_ACCESS_KEY: p0a2_minio
+      MINIO_SECRET_KEY: p0a2_minio_password_only
+      MINIO_BUCKET: p0a2-test-bucket
+      MINIO_ALIAS: source
+      BACKUP_DIR: /backup
+      TARGET_DATABASE_URL: postgresql://p0a2_restore_user:p0a2_restore_password_only@db-restore:5432/p0a2_restore
+    depends_on:
+      db-test: {condition: service_healthy}
+      minio-test: {condition: service_healthy}
+      db-restore: {condition: service_healthy}
+      minio-restore: {condition: service_healthy}
+    volumes:
+      - p0a2-test-backup:/backup
+    networks: [p0a2-test]
+    command: ["sleep", "infinity"]
+networks:
+  p0a2-test:
+    name: mobile-money-corpus-p0a2-test
+    driver: bridge
+volumes:
+  p0a2-test-pgdata:
+    name: mobile-money-corpus-p0a2-test-pgdata
+  p0a2-test-miniodata:
+    name: mobile-money-corpus-p0a2-test-miniodata
+  p0a2-test-restore-pgdata:
+    name: mobile-money-corpus-p0a2-test-restore-pgdata
+  p0a2-test-restore-miniodata:
+    name: mobile-money-corpus-p0a2-test-restore-miniodata
+  p0a2-test-backup:
+    name: mobile-money-corpus-p0a2-test-backup

@@ -1,4 +1,3 @@
-from io import BytesIO
 from minio import Minio
 from .config import settings
 
@@ -31,7 +30,18 @@ def put_file(object_name: str, path: str, content_type: str):
         client.put_object(settings.minio_bucket, object_name, f, size, content_type=content_type)
 
 def delete_file(object_name: str):
-    client.remove_object(settings.minio_bucket, object_name)
+    from minio.error import S3Error
+    try:
+        client.remove_object(settings.minio_bucket, object_name)
+    except S3Error as exc:
+        if exc.code not in {"NoSuchKey", "NoSuchObject", "NotFound"}:
+            raise
+
+def stat_file(object_name: str):
+    return client.stat_object(settings.minio_bucket, object_name)
+
+def list_files(prefix: str = ""):
+    return client.list_objects(settings.minio_bucket, prefix=prefix, recursive=True)
 
 def get_bytes(object_name: str) -> bytes:
     resp = client.get_object(settings.minio_bucket, object_name)

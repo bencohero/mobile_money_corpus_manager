@@ -72,6 +72,13 @@ class Recording(Base):
     wav_object: Mapped[str] = mapped_column(String(255))
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default=RecordingStatus.RECORDED.value)
+    sync_status: Mapped[str] = mapped_column(String(30), default="READY", index=True)
+    raw_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    wav_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    wav_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     participant = relationship("Participant", back_populates="recordings")
