@@ -19,7 +19,7 @@
     {% if user.role=="ADMIN" %}<a href="/participants" {% if request.url.path == "/participants" %}class="active" aria-current="page"{% endif %}>Participants</a><a href="/users" {% if request.url.path == "/users" %}class="active" aria-current="page"{% endif %}>Équipe</a>{% endif %}
   </div>
   <div class="nav-actions">
-    {% if user.role=="ADMIN" %}<a class="icon-action" href="/export/recordings.csv" title="Exporter le corpus CSV" aria-label="Exporter le corpus CSV">↓ <span>CSV</span></a>{% endif %}
+    {% if user.role=="ADMIN" %}<a class="icon-action" href="/admin/export" title="Exporter le corpus" aria-label="Exporter le corpus">↓ <span>Export</span></a>{% endif %}
     <span class="user-chip"><span class="avatar" aria-hidden="true">{{ user.username[0]|upper }}</span><span><strong>{{ user.username }}</strong><small>{{ user.role }}</small></span></span>
     <form method="post" action="/logout" class="logout-form"><button type="submit" class="icon-action" title="Se déconnecter" aria-label="Se déconnecter">↗</button></form>
   </div>

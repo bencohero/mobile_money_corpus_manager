@@ -11,10 +11,13 @@ from sqlalchemy.exc import IntegrityError
 
 from .config import settings
 from .db import Base, engine, get_db, SessionLocal
-from .models import User, Participant, Utterance, Recording, Transcription, AuditLog
+from .models import User, Participant, Utterance, Recording, Transcription, AuditLog, RecordingSubmission
+from .take_sequence import next_take_estimate, TakeLimitReached
+from .recording_submission import reserve as reserve_recording, finish as finish_recording, mark_error as mark_recording_error, result as submission_result
 from .auth import verify_password, hash_password, create_token, get_current_user
-from .storage import ensure_bucket, put_file, get_bytes, delete_file, stat_file, list_files
+from .storage import ensure_bucket, put_file, get_bytes, delete_file, stat_file, list_files, verify_file
 from .seed import seed
+from .corpus_export import build_export, parse_filters, stream_file
 
 logger = logging.getLogger("mobile_money_corpus_manager")
 ALLOWED_AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/mpeg"}
@@ -42,7 +45,7 @@ def compensate_uploaded(uploaded, request):
         try:
             delete_file(object_name)
         except Exception:
-            logger.exception("MinIO compensation failed", extra={"operation_id": operation_id(request)})
+            logger.error("MinIO compensation failed; reconciliation required", extra={"operation_id": operation_id(request)})
 
 
 app = FastAPI(title="Mobile Money Corpus Manager")
@@ -137,7 +140,7 @@ def logout(request: Request, csrf_token: str = Form(...)):
 def dashboard(request: Request, db: Session = Depends(get_db)):
     user = current(request,db)
     if not user: return RedirectResponse("/login",303)
-    qrec = db.query(Recording)
+    qrec = db.query(Recording).filter(Recording.sync_status == "READY")
     if user.role=="PARTICIPANT" and user.participant_id:
         qrec=qrec.filter(Recording.participant_id==user.participant_id)
     stats = {
@@ -190,100 +193,125 @@ def record_page(request: Request, db: Session=Depends(get_db)):
     participants=db.query(Participant).order_by(Participant.participant_code).all() if user.role=="ADMIN" else []
     return templates.TemplateResponse("record.html",{"request":request,"user":user,"participant":participant,"participants":participants,"utterances":utterances})
 
-@app.post("/api/recordings")
-async def upload_recording(
-    request: Request,
-    utterance_id: int=Form(...),
-    take_number: int=Form(1),
-    condition: str=Form("CLEAN"),
-    participant_id: int|None=Form(None),
-    audio: UploadFile=File(...),
-    db: Session=Depends(get_db)
-):
-    user=require(request,db,["PARTICIPANT","ADMIN"])
-    check_csrf(request)
-    pid=user.participant_id if user.role=="PARTICIPANT" else participant_id
-    if not pid: raise HTTPException(400,"participant requis")
-    participant=db.get(Participant,pid)
-    utterance=db.get(Utterance,utterance_id)
+def recording_context(db, user, participant_id, utterance_id, condition):
+    pid = user.participant_id if user.role == "PARTICIPANT" else participant_id
+    if user.role == "PARTICIPANT" and participant_id is not None and participant_id != pid:
+        raise HTTPException(403, "Participant non autorisé")
+    if not pid: raise HTTPException(400, "participant requis")
+    participant, utterance = db.get(Participant, pid), db.get(Utterance, utterance_id)
     if not participant or not utterance: raise HTTPException(404)
-    if not participant.consent_obtained: raise HTTPException(403,"consentement absent")
-    if condition not in ALLOWED_CONDITIONS: raise HTTPException(400,"condition invalide")
-    if take_number < 1 or take_number > 999: raise HTTPException(400,"numéro de prise invalide")
-    content_type=(audio.content_type or "").split(";", 1)[0].lower()
-    if content_type not in ALLOWED_AUDIO_TYPES: raise HTTPException(415,"format audio non accepté")
-    audio_id=f"{participant.participant_code}_{utterance.utterance_code}_{condition}_T{take_number:02d}"
-    if db.query(Recording).filter_by(audio_id=audio_id).first():
-        raise HTTPException(409,"Cette prise existe déjà")
+    if not participant.consent_obtained: raise HTTPException(403, "consentement absent")
+    if not utterance.active: raise HTTPException(400, "scénario inactif")
+    if condition not in ALLOWED_CONDITIONS: raise HTTPException(400, "condition invalide")
+    return participant, utterance
 
-    suffix=Path(audio.filename or "audio.webm").suffix or ".webm"
+
+@app.get("/api/recordings/next-take")
+def preview_take(request: Request, utterance_id: int, condition: str = "CLEAN",
+                 participant_id: int | None = None, db: Session = Depends(get_db)):
+    user = require(request, db, ["PARTICIPANT", "ADMIN"])
+    participant, utterance = recording_context(db, user, participant_id, utterance_id, condition)
+    try:
+        return {"next_take_number": next_take_estimate(db, participant.id, utterance.id, condition), "reserved": False}
+    except TakeLimitReached as exc:
+        raise HTTPException(409, str(exc))
+
+
+@app.post("/api/recordings")
+def upload_recording(
+    request: Request, utterance_id: int = Form(...), condition: str = Form("CLEAN"),
+    participant_id: int | None = Form(None), idempotency_key: str = Form(...),
+    take_number: str | None = Form(None), audio: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    user = require(request, db, ["PARTICIPANT", "ADMIN"])
+    check_csrf(request)
+    if take_number is not None:
+        raise HTTPException(400, "take_number est attribué par le serveur ; retirez ce champ.")
+    if not 16 <= len(idempotency_key) <= 128 or not all(c.isascii() and (c.isalnum() or c in "-_") for c in idempotency_key):
+        raise HTTPException(400, "Clé d’idempotence invalide")
+    participant, utterance = recording_context(db, user, participant_id, utterance_id, condition)
+    content_type = (audio.content_type or "").split(";", 1)[0].lower()
+    if content_type not in ALLOWED_AUDIO_TYPES: raise HTTPException(415, "format audio non accepté")
+    suffix = {"audio/webm": ".webm", "audio/ogg": ".ogg", "audio/wav": ".wav",
+              "audio/x-wav": ".wav", "audio/mp4": ".mp4", "audio/mpeg": ".mp3"}[content_type]
+    # Snapshot authorization data; no transaction spans reading/converting/uploading.
+    uid = user.id
+    db.expunge(participant); db.expunge(utterance); db.rollback()
     with tempfile.TemporaryDirectory() as td:
-        raw=Path(td)/f"raw{suffix}"
-        wav=Path(td)/"normalized.wav"
-        size = 0
+        raw, wav = Path(td) / ("source" + suffix), Path(td) / "audio.wav"
+        size, digest = 0, hashlib.sha256()
         with raw.open("wb") as target:
-            while chunk := await audio.read(1024 * 1024):
+            while chunk := audio.file.read(1024 * 1024):
                 size += len(chunk)
                 if size > settings.max_audio_mb * 1024 * 1024:
-                    raise HTTPException(413, f"audio limité à {settings.max_audio_mb} Mo")
-                target.write(chunk)
-        if size == 0: raise HTTPException(400,"fichier audio vide")
+                    raise HTTPException(413, "Fichier audio trop volumineux")
+                digest.update(chunk); target.write(chunk)
+        if not size: raise HTTPException(400, "fichier audio vide")
+        raw_sha = digest.hexdigest()
+        fingerprint = hashlib.sha256(f"{participant.id}:{utterance.id}:{condition}:{content_type}:{raw_sha}".encode()).hexdigest()
         try:
-            run_audio_command(["ffmpeg","-y","-loglevel","error","-i",str(raw),"-ar","16000","-ac","1","-c:a","pcm_s16le",str(wav)],check=True,timeout=settings.ffmpeg_timeout_seconds,capture_output=True)
-        except ConversionSaturated:
-            raise HTTPException(429,"Le traitement audio est momentanement sature. Reessayez.")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            raise HTTPException(422,"audio illisible ou conversion trop longue")
-        try:
-            with wave.open(str(wav), "rb") as normalized:
-                if (normalized.getnchannels(), normalized.getsampwidth(), normalized.getframerate(), normalized.getnframes()) != (1, 2, 16000, normalized.getnframes()) or normalized.getnframes() <= 0:
-                    raise ValueError("invalid normalized wav")
-        except (wave.Error, OSError, EOFError, ValueError):
-            raise audio_error(request, 422, "audio converti invalide")
-        raw_obj=f"raw/{participant.participant_code}/{audio_id}{suffix}"
-        wav_obj=f"normalized/{participant.participant_code}/{audio_id}.wav"
-        uploaded=[]
-        try:
-            put_file(raw_obj,str(raw),audio.content_type or "application/octet-stream"); uploaded.append(raw_obj)
-            put_file(wav_obj,str(wav),"audio/wav"); uploaded.append(wav_obj)
+            receipt, created = reserve_recording(db, uid, participant, utterance, condition, idempotency_key, fingerprint, suffix)
+        except TakeLimitReached as exc:
+            db.rollback()
+            raise HTTPException(409, str(exc))
+        except HTTPException:
+            raise
         except Exception:
-            compensate_uploaded(uploaded, request)
             db.rollback()
-            logger.exception("MinIO upload failed", extra={"operation_id": operation_id(request)})
-            raise HTTPException(502,"Stockage audio temporairement indisponible")
+            logger.error("Recording reservation failed")
+            raise HTTPException(503, "Réservation indisponible ; réessayez avec la même clé.")
+        if not created:
+            return submission_result(receipt)
+        rec = db.get(Recording, receipt.recording_id)
+        raw_obj, wav_obj = rec.raw_object, rec.wav_object
+        db.rollback()
+        attempted = []
         try:
-            p=run_audio_command(["ffprobe","-v","error","-show_entries","format=duration","-of","default=nw=1:nk=1",str(wav)],capture_output=True,text=True,check=True,timeout=settings.ffprobe_timeout_seconds)
-            duration_ms=int(float(p.stdout.strip() or "0")*1000)
-            if not settings.min_audio_duration_seconds*1000 <= duration_ms <= settings.max_audio_duration_seconds*1000:
-                raise ValueError("duration out of limits")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
-            compensate_uploaded(uploaded, request)
-            db.rollback()
-            raise audio_error(request, 422, "audio illisible, durée invalide ou conversion trop longue")
-        raw_bytes, wav_bytes = raw.read_bytes(), wav.read_bytes()
-        raw_sha, wav_sha, wav_size = hashlib.sha256(raw_bytes).hexdigest(), hashlib.sha256(wav_bytes).hexdigest(), len(wav_bytes)
-
-    rec=Recording(audio_id=audio_id,participant_id=pid,utterance_id=utterance_id,take_number=take_number,
-                  condition=condition,raw_object=raw_obj,wav_object=wav_obj,duration_ms=duration_ms,sync_status="READY",raw_size_bytes=size,wav_size_bytes=wav_size,raw_sha256=raw_sha,wav_sha256=wav_sha,finalized_at=datetime.utcnow())
-    db.add(rec)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        compensate_uploaded(uploaded, request)
-        raise HTTPException(409,"Cette prise existe déjà")
-    except Exception:
-        db.rollback()
-        compensate_uploaded(uploaded, request)
-        logger.exception("PostgreSQL commit failed", extra={"operation_id": operation_id(request)})
-        raise HTTPException(502,"Enregistrement audio temporairement indisponible")
-    audit(db,user,"CREATE_RECORDING","recording",rec.id,audio_id)
-    return {"ok":True,"audio_id":audio_id,"recording_id":rec.id}
+            try:
+                run_audio_command(["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw), "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(wav)], check=True, timeout=settings.ffmpeg_timeout_seconds, capture_output=True)
+                with wave.open(str(wav), "rb") as normalized:
+                    if (normalized.getnchannels(), normalized.getsampwidth(), normalized.getframerate()) != (1, 2, 16000) or normalized.getnframes() <= 0:
+                        raise ValueError("invalid normalized WAV")
+                probe = run_audio_command(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(wav)], capture_output=True, text=True, check=True, timeout=settings.ffprobe_timeout_seconds)
+                duration_ms = int(float(probe.stdout.strip()) * 1000)
+                if not settings.min_audio_duration_seconds * 1000 <= duration_ms <= settings.max_audio_duration_seconds * 1000:
+                    raise ValueError("invalid duration")
+            except ConversionSaturated:
+                raise HTTPException(429, "Le traitement audio est saturé ; cette réservation est en erreur.")
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, wave.Error, OSError, EOFError, ValueError):
+                raise HTTPException(422, "audio illisible, durée invalide ou conversion trop longue")
+            wav_data = wav.read_bytes()
+            wav_sha, wav_size = hashlib.sha256(wav_data).hexdigest(), len(wav_data)
+            # Record attempted keys BEFORE PUT: a timeout may occur after the server stored it.
+            attempted.append(raw_obj); put_file(raw_obj, str(raw), content_type)
+            attempted.append(wav_obj); put_file(wav_obj, str(wav), "audio/wav")
+            verify_file(raw_obj, size, raw_sha)
+            verify_file(wav_obj, wav_size, wav_sha)
+            receipt = finish_recording(db, receipt.id, {
+                "duration_ms": duration_ms, "raw_size_bytes": size, "wav_size_bytes": wav_size,
+                "raw_sha256": raw_sha, "wav_sha256": wav_sha,
+            })
+            return submission_result(receipt)
+        except Exception as exc:
+            status = exc.status_code if isinstance(exc, HTTPException) else 502
+            detail = exc.detail if isinstance(exc, HTTPException) else "Enregistrement audio temporairement indisponible"
+            try:
+                receipt = mark_recording_error(db, receipt.id, status, detail)
+            except Exception:
+                db.rollback()
+                # Outcome unknown: never delete objects that a committed READY row may own.
+                logger.error("Recording outcome unknown; reconciliation required", extra={"operation_id": receipt.id})
+                raise HTTPException(503, "État de finalisation indéterminé ; réessayez avec la même clé.")
+            if receipt.state == "READY":
+                return submission_result(receipt)
+            compensate_uploaded(attempted, request)
+            return submission_result(receipt)
 
 @app.get("/recordings", response_class=HTMLResponse)
 def recordings_page(request: Request, db: Session=Depends(get_db)):
     user=require(request,db,["ADMIN","PARTICIPANT","TRANSCRIBER","VALIDATOR"])
-    q=db.query(Recording)
+    q=db.query(Recording).filter(Recording.sync_status == "READY")
     if user.role=="PARTICIPANT":
         q=q.filter(Recording.participant_id==user.participant_id)
     items=q.order_by(Recording.created_at.desc()).all()
@@ -294,6 +322,7 @@ def audio(recording_id:int, request:Request, db:Session=Depends(get_db)):
     user=require(request,db,["ADMIN","PARTICIPANT","TRANSCRIBER","VALIDATOR"])
     rec=db.get(Recording,recording_id)
     if not rec: raise HTTPException(404)
+    if rec.sync_status != "READY": raise HTTPException(409, "Audio non finalisé")
     if user.role=="PARTICIPANT" and rec.participant_id!=user.participant_id:
         raise HTTPException(403)
     return Response(get_bytes(rec.wav_object),media_type="audio/wav")
@@ -303,6 +332,7 @@ def transcribe_page(recording_id:int, request:Request, db:Session=Depends(get_db
     user=require(request,db,["ADMIN","PARTICIPANT","TRANSCRIBER","VALIDATOR"])
     rec=db.get(Recording,recording_id)
     if not rec: raise HTTPException(404)
+    if rec.sync_status != "READY": raise HTTPException(409, "Audio non finalisé")
     if user.role=="PARTICIPANT" and rec.participant_id!=user.participant_id:
         raise HTTPException(403)
     return templates.TemplateResponse("transcribe.html",{"request":request,"user":user,"rec":rec})
@@ -322,6 +352,7 @@ def save_transcription(
         raise HTTPException(403)
     if rec.status == "VERIFIED" and user.role != "ADMIN":
         raise HTTPException(409,"Une transcription validée doit être rouverte par un administrateur")
+    if rec.sync_status != "READY": raise HTTPException(409, "Audio non finalisé")
     tr=rec.transcription
     if tr:
         tr.reference_transcription=reference_transcription
@@ -346,6 +377,7 @@ def verify(
     check_csrf(request, csrf_token)
     rec=db.get(Recording,recording_id)
     if not rec or not rec.transcription: raise HTTPException(404)
+    if rec.sync_status != "READY": raise HTTPException(409, "Audio non finalisé")
     rec.transcription.verifier_id=user.id
     rec.transcription.verifier_comment=comment or None
     if decision=="VERIFIED":
@@ -385,6 +417,8 @@ def delete_recording(recording_id: int, request: Request, csrf_token: str = Form
     rec = db.get(Recording, recording_id)
     if not rec:
         raise HTTPException(404, "Enregistrement introuvable")
+    if rec.sync_status == "PENDING":
+        raise HTTPException(409, "Réservation en cours ; réconciliation requise avant suppression")
     try:
         delete_file(rec.raw_object)
         delete_file(rec.wav_object)
@@ -393,12 +427,37 @@ def delete_recording(recording_id: int, request: Request, csrf_token: str = Form
         logger.exception("Unable to delete MinIO objects for recording %s", recording_id)
         raise HTTPException(502, "Suppression du fichier audio impossible")
     audio_id = rec.audio_id
+    receipt = db.query(RecordingSubmission).filter_by(recording_id=rec.id).first()
+    if receipt:
+        receipt.state = "DELETED"
+        receipt.updated_at = datetime.utcnow()
     if rec.transcription:
         db.delete(rec.transcription)
     db.delete(rec)
     db.commit()
     audit(db, admin, "DELETE_RECORDING", "recording", recording_id, audio_id)
     return RedirectResponse("/recordings", 303)
+
+@app.get("/admin/export", response_class=HTMLResponse)
+def corpus_export_page(request: Request, db: Session = Depends(get_db)):
+    user = require(request, db, ["ADMIN"])
+    return templates.TemplateResponse("export.html", {"request": request, "user": user})
+
+@app.post("/admin/export/corpus")
+def corpus_export(request: Request, mode: str = Form("work"), status: str = Form(""), verification_status: str = Form(""), condition: str = Form(""), participant: str = Form(""), intent: str = Form(""), has_transcription: str = Form(""), date_min: str = Form(""), date_max: str = Form(""), strict: str = Form("true"), csrf_token: str | None = Form(None), db: Session = Depends(get_db)):
+    admin = require(request, db, ["ADMIN"])
+    check_csrf(request, csrf_token)
+    filters = parse_filters(mode, status, verification_status, condition, participant, intent, has_transcription, date_min, date_max, strict)
+    try:
+        zip_path, prefix = build_export(db, filters)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Corpus export failed", extra={"operation_id": operation_id(request), "classification": getattr(exc, "classification", "export_error")})
+        raise HTTPException(getattr(exc, "status_code", 502), getattr(exc, "message", "Export impossible, aucune archive n’a été envoyée"))
+    filename = f"{prefix}.zip"
+    logger.info("Corpus export completed", extra={"admin_id": admin.id, "mode": filters["mode"], "filters": filters, "archive": filename})
+    return StreamingResponse(stream_file(zip_path), media_type="application/zip", headers={"Content-Disposition": f"attachment; filename=\"{filename}\"", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 @app.get("/export/recordings.csv")
 def export_recordings(request:Request,db:Session=Depends(get_db)):
@@ -408,7 +467,7 @@ def export_recordings(request:Request,db:Session=Depends(get_db)):
     w.writerow(["audio_id","participant_code","utterance_code","intent","condition","take_number",
                 "duration_ms","status","reference_transcription","normalized_transcription",
                 "verification_status","wav_object"])
-    for r in db.query(Recording).order_by(Recording.id).all():
+    for r in db.query(Recording).filter(Recording.sync_status == "READY").order_by(Recording.id).all():
         tr=r.transcription
         w.writerow([r.audio_id,r.participant.participant_code,r.utterance.utterance_code,r.utterance.intent,
                     r.condition,r.take_number,r.duration_ms,r.status,

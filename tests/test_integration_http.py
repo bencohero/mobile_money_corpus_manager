@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import wave
+import uuid
 import httpx
 from sqlalchemy import select
 from app.db import SessionLocal
@@ -26,9 +27,12 @@ def wav_bytes(seconds=0.8):
 def csrf(client):
     return client.cookies.get("csrf_token")
 def create_participant(admin, code, username, password):
+    # The isolated stack is persistent; permit repeated runs without deleting fixtures.
+    if code in admin.get("/participants").text: return
     response = admin.post("/participants", data={"participant_code": code, "username": username, "password": password, "language": "mos", "consent_obtained": "on", "csrf_token": csrf(admin)})
     assert response.status_code == 303
 def create_user(admin, username, password, role):
+    if username in admin.get("/users").text: return
     response = admin.post("/users", data={"username": username, "password": password, "role": role, "csrf_token": csrf(admin)})
     assert response.status_code == 303
 def test_end_to_end_http_postgres_minio_permissions_and_reconcile():
@@ -42,12 +46,13 @@ def test_end_to_end_http_postgres_minio_permissions_and_reconcile():
     page = participant.get("/record")
     utterance_id = re.search(r'<option value="(\d+)"', page.text).group(1)
     files = {"audio": ("synthetic.wav", wav_bytes(), "audio/wav")}
-    data = {"utterance_id": utterance_id, "take_number": "1", "condition": "CLEAN"}
+    data = {"utterance_id": utterance_id, "idempotency_key": uuid.uuid4().hex, "condition": "CLEAN"}
     response = participant.post("/api/recordings", data=data, files=files, headers={"X-CSRF-Token": csrf(participant)})
     assert response.status_code == 200, response.text
     recording_id = response.json()["recording_id"]
-    response2 = participant.post("/api/recordings", data={**data, "take_number": "2"}, files=files, headers={"X-CSRF-Token": csrf(participant)})
+    response2 = participant.post("/api/recordings", data={**data, "idempotency_key": uuid.uuid4().hex}, files=files, headers={"X-CSRF-Token": csrf(participant)})
     assert response2.status_code == 200
+    assert response2.json()["take_number"] == response.json()["take_number"] + 1
     with SessionLocal() as db:
         rec = db.get(Recording, recording_id)
         assert rec and rec.participant.participant_code == "P0A2_S001"
@@ -82,8 +87,11 @@ def test_http_csrf_and_invalid_audio_are_rejected():
     client = login("p0a2-participant", "p0a2-participant-password")
     assert client.get("/record").status_code == 200
     utterance_id = re.search(r'<option value="(\d+)"', client.get("/record").text).group(1)
-    no_csrf = client.post("/api/recordings", data={"utterance_id": utterance_id, "take_number": "99", "condition": "CLEAN"}, files={"audio": ("bad.wav", b"not-audio", "audio/wav")})
+    no_csrf = client.post("/api/recordings", data={"utterance_id": utterance_id, "idempotency_key": uuid.uuid4().hex, "condition": "CLEAN"}, files={"audio": ("bad.wav", b"not-audio", "audio/wav")})
     assert no_csrf.status_code == 403
-    invalid = client.post("/api/recordings", data={"utterance_id": utterance_id, "take_number": "99", "condition": "CLEAN"}, files={"audio": ("bad.wav", b"not-audio", "audio/wav")}, headers={"X-CSRF-Token": csrf(client)})
+    invalid = client.post("/api/recordings", data={"utterance_id": utterance_id, "idempotency_key": uuid.uuid4().hex, "condition": "CLEAN"}, files={"audio": ("bad.wav", b"not-audio", "audio/wav")}, headers={"X-CSRF-Token": csrf(client)})
     assert invalid.status_code in {422, 502}
+    admin = login("admin", ADMIN_PASSWORD)
+    assert admin.post(f'/recordings/{invalid.json()["recording_id"]}/delete', data={"csrf_token": csrf(admin)}).status_code == 303
+    admin.close()
     client.close()

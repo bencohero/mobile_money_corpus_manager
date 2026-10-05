@@ -5,3 +5,9 @@ FFmpeg: verifier les timeouts, le stockage temporaire et la saturation; les util
 Secrets: generer avec python -c 'import secrets; print(secrets.token_urlsafe(48))', remplacer hors Git, redemarrer et verifier COOKIE_SECURE.
 Disque: surveiller les volumes, /tmp/audio et BACKUP_DIR; conserver une marge libre et appliquer la retention.
 Manuel VPS restant: tester HTTPS/microphone, rotation des logs, quotas Docker, restauration complete et alertes disque.
+# Prises : réservations et idempotence
+
+Depuis `0003_take_sequences`, les états PENDING/ERROR sont des réservations durables et les
+numéros ne sont jamais recyclés. Voir [la procédure détaillée](TAKE_SEQUENCES.md) pour les
+commits indéterminés, la réconciliation et le traitement manuel des orphelins historiques.
+Ne pas purger les compteurs ou reçus pour débloquer un enregistrement.

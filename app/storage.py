@@ -40,6 +40,24 @@ def delete_file(object_name: str):
 def stat_file(object_name: str):
     return client.stat_object(settings.minio_bucket, object_name)
 
+def verify_file(object_name: str, expected_size: int, expected_sha256: str):
+    """Verify remote bytes with bounded reads before publishing READY."""
+    import hashlib
+    if stat_file(object_name).size != expected_size:
+        raise ValueError("stored object size mismatch")
+    response = client.get_object(settings.minio_bucket, object_name)
+    digest, size = hashlib.sha256(), 0
+    try:
+        while chunk := response.read(1024 * 1024):
+            size += len(chunk)
+            if size > expected_size: raise ValueError("stored object exceeds expected size")
+            digest.update(chunk)
+    finally:
+        response.close()
+        response.release_conn()
+    if size != expected_size or digest.hexdigest() != expected_sha256:
+        raise ValueError("stored object checksum mismatch")
+
 def list_files(prefix: str = ""):
     return client.list_objects(settings.minio_bucket, prefix=prefix, recursive=True)
 

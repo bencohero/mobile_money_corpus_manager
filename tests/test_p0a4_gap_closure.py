@@ -23,7 +23,7 @@ def test_p0a13_postgres_minio_failure_modes_are_explicit(fault, monkeypatch, cap
     main.compensate_uploaded(uploaded, type("Request",(),{"headers":{}})())
     assert attempted == uploaded
     if fault in {"compensation_second_delete","minio_during_compensation","minio_delete_timeout","minio_delete_unavailable"}:
-        assert fault in caplog.text
+        assert "MinIO compensation failed" in caplog.text
 
 @pytest.mark.parametrize("seconds,expected", [
     (0.249, "below-minimum"),

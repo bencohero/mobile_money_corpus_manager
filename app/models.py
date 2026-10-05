@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import String, Text, Integer, Boolean, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Text, Integer, Boolean, DateTime, ForeignKey, UniqueConstraint, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
@@ -61,6 +61,7 @@ class Recording(Base):
     __tablename__ = "recordings"
     __table_args__ = (
         UniqueConstraint("participant_id", "utterance_id", "condition", "take_number", name="uq_recording_take"),
+        CheckConstraint("take_number BETWEEN 1 AND 999", name="ck_recordings_take_range"),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
     audio_id: Mapped[str] = mapped_column(String(120), unique=True, index=True)
@@ -84,6 +85,36 @@ class Recording(Base):
     participant = relationship("Participant", back_populates="recordings")
     utterance = relationship("Utterance")
     transcription = relationship("Transcription", back_populates="recording", uselist=False)
+
+class RecordingTakeCounter(Base):
+    __tablename__ = "recording_take_counters"
+    __table_args__ = (CheckConstraint("last_take_number BETWEEN 1 AND 999", name="ck_take_counter_range"),)
+    participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id", ondelete="RESTRICT"), primary_key=True)
+    utterance_id: Mapped[int] = mapped_column(ForeignKey("utterances.id", ondelete="RESTRICT"), primary_key=True)
+    condition: Mapped[str] = mapped_column(String(20), primary_key=True)
+    last_take_number: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class RecordingSubmission(Base):
+    """Durable receipt, retained even after the recording is deleted."""
+    __tablename__ = "recording_submissions"
+    __table_args__ = (UniqueConstraint("user_id", "idempotency_key", name="uq_submission_user_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id", ondelete="RESTRICT"))
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    recording_id: Mapped[int | None] = mapped_column(ForeignKey("recordings.id", ondelete="SET NULL"), nullable=True, unique=True)
+    take_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    audio_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    state: Mapped[str] = mapped_column(String(20), default="PENDING")
+    error_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
 
 class Transcription(Base):
     __tablename__ = "transcriptions"

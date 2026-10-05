@@ -9,4 +9,4 @@ def test_migrated_schema_matches_expected():
     indexes={i["name"] for i in inspect(engine).get_indexes("recordings")}
     assert "ix_recordings_sync_status" in indexes
     with engine.connect() as conn:
-        assert conn.execute(text("select version_num from alembic_version")).scalar() == "0002_p0a_recording_sync"
+        assert conn.execute(text("select version_num from alembic_version")).scalar() == "0003_take_sequences"

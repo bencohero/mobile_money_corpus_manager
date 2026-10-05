@@ -34,7 +34,7 @@ def test_reconciliation_exhaustive_artificial_anomalies_is_read_only():
         rec.raw_size_bytes=(rec.raw_size_bytes or 0)+1
         rec.wav_size_bytes=(rec.wav_size_bytes or 0)+1
         rec.raw_sha256="0"*64; rec.wav_sha256="1"*64
-        rec.sync_status="ERROR"; rec.sync_error="synthetic failure"; db.commit()
+        rec.sync_status="PENDING"; rec.sync_error="synthetic failure"; db.commit()
     before=(raw_name,wav_name,orphan_raw,orphan_wav)
     try:
         result=run_reconcile()
@@ -45,7 +45,7 @@ def test_reconciliation_exhaustive_artificial_anomalies_is_read_only():
         assert "0"*64 not in result.stdout
         with SessionLocal() as db:
             rec=db.get(Recording,rid)
-            assert rec.sync_status=="ERROR"
+            assert rec.sync_status=="PENDING"
             assert rec.raw_size_bytes==original["raw_size_bytes"]+1
     finally:
         with tempfile.TemporaryDirectory() as td:

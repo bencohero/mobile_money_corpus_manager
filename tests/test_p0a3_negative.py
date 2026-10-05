@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import threading
 import wave
+import uuid
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
@@ -89,28 +91,40 @@ def test_audio_negative_inputs_have_controlled_responses_and_no_ready_rows():
     utterance=re.search(r'<option value="(\d+)"',c.get("/record").text).group(1)
     cases=[(31,b"","audio/wav",400),(32,b"not audio","audio/wav",422),(33,os.urandom(128),"audio/wav",422),(34,wav(0.05),"audio/wav",422)]
     for take,body,mime,expected in cases:
-        r=c.post("/api/recordings",data={"utterance_id":utterance,"take_number":take,"condition":"CLEAN"},files={"audio":("x.wav",body,mime)},headers={"X-CSRF-Token":token(c)})
+        r=c.post("/api/recordings",data={"utterance_id":utterance,"idempotency_key":uuid.uuid4().hex,"condition":"CLEAN"},files={"audio":("x.wav",body,mime)},headers={"X-CSRF-Token":token(c)})
         assert r.status_code == expected, (take,r.status_code,r.text)
         assert "Traceback" not in r.text and "/tmp" not in r.text
-        with SessionLocal() as db:
-            assert db.query(Recording).filter_by(take_number=take).first() is None
+        if "recording_id" in r.json():
+            rid = r.json()["recording_id"]
+            with SessionLocal() as db:
+                assert db.get(Recording, rid).sync_status == "ERROR"
+            admin=login("admin",os.environ["ADMIN_PASSWORD"])
+            assert admin.post(f"/recordings/{rid}/delete",data={"csrf_token":token(admin)}).status_code==303
+            admin.close()
     c.close()
 
-def test_concurrent_duplicate_returns_one_success_and_one_conflict():
+def test_concurrent_uploads_return_distinct_takes_and_valid_objects():
     c1=login("p0a2-participant","p0a2-participant-password")
     c2=login("p0a2-participant","p0a2-participant-password")
     utterance=re.search(r'<option value="(\d+)"',c1.get("/record").text).group(1)
     def send(c):
-        return c.post("/api/recordings",data={"utterance_id":utterance,"take_number":40,"condition":"CLEAN"},files={"audio":("x.wav",wav(.8),"audio/wav")},headers={"X-CSRF-Token":token(c)})
+        return c.post("/api/recordings",data={"utterance_id":utterance,"idempotency_key":uuid.uuid4().hex,"condition":"CLEAN"},files={"audio":("x.wav",wav(.8),"audio/wav")},headers={"X-CSRF-Token":token(c)})
     with ThreadPoolExecutor(max_workers=2) as pool:
         results=list(pool.map(send,[c1,c2]))
-    assert sorted(r.status_code for r in results)==[200,409]
+    assert sorted(r.status_code for r in results)==[200,200]
+    assert len({r.json()["take_number"] for r in results}) == 2
+    ids = [r.json()["recording_id"] for r in results]
     with SessionLocal() as db:
-        rows=db.query(Recording).filter_by(take_number=40).all()
-        assert len(rows)==1
-        rid=rows[0].id
+        rows=db.query(Recording).filter(Recording.id.in_(ids)).all()
+        assert len(rows)==2
+        for row in rows:
+            for kind in ("raw", "wav"):
+                data = get_bytes(getattr(row, kind + "_object"))
+                assert len(data) == getattr(row, kind + "_size_bytes")
+                assert hashlib.sha256(data).hexdigest() == getattr(row, kind + "_sha256")
     admin=login("admin",os.environ["ADMIN_PASSWORD"])
-    assert admin.post(f"/recordings/{rid}/delete",data={"csrf_token":token(admin)}).status_code==303
+    for rid in ids:
+        assert admin.post(f"/recordings/{rid}/delete",data={"csrf_token":token(admin)}).status_code==303
     for c in (c1,c2,admin): c.close()
 
 def test_compensation_attempts_all_objects_even_if_one_delete_fails(monkeypatch, caplog):
@@ -121,7 +135,7 @@ def test_compensation_attempts_all_objects_even_if_one_delete_fails(monkeypatch,
     monkeypatch.setattr(main,"delete_file",remove)
     main.compensate_uploaded(["raw","wav"], type("R",(),{"headers":{}})())
     assert seen==["raw","wav"]
-    assert "network" in caplog.text
+    assert "MinIO compensation failed" in caplog.text
 
 def test_audio_command_releases_slot_after_exception():
     class S:

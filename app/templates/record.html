@@ -6,7 +6,7 @@
   {% if user.role=="ADMIN" %}<div class="field"><label for="participant">Participant</label><select id="participant">{% for p in participants %}<option value="{{p.id}}">{{p.participant_code}}</option>{% endfor %}</select></div>{% endif %}
   <div class="field"><label for="utterance">Commande ou scénario</label><select id="utterance">{% for u in utterances %}<option value="{{u.id}}" data-scenario="{{u.scenario_fr}}">{{u.utterance_code}} — {{u.intent}}</option>{% endfor %}</select></div>
   <div id="scenario" class="scenario-box" aria-live="polite"></div>
-  <div class="form-grid"><div class="field"><label for="condition">Condition sonore</label><select id="condition"><option value="CLEAN">Calme · CLEAN</option><option value="NOISY">Bruit ambiant · NOISY</option></select></div><div class="field"><label for="take">Numéro de prise</label><input id="take" type="number" min="1" max="999" value="1"></div></div>
+  <div class="form-grid"><div class="field"><label for="condition">Condition sonore</label><select id="condition"><option value="CLEAN">Calme · CLEAN</option><option value="NOISY">Bruit ambiant · NOISY</option></select></div><div class="field"><label for="take">Prochaine prise (non réservée)</label><output id="take" aria-live="polite">Chargement…</output></div></div>
 </section>
 <section class="card recorder-panel"><div class="step-label"><span>2</span> Enregistrer et contrôler</div>
   <div class="recorder-orb" id="recorder-orb" aria-hidden="true"><span></span></div>
@@ -14,14 +14,121 @@
   <p id="status" class="status-message" role="status" aria-live="polite">Micro prêt à démarrer.</p>
   <div class="actions centered"><button id="start" type="button">● Démarrer</button><button id="stop" type="button" class="secondary" disabled>■ Arrêter</button></div>
   <audio id="preview" controls aria-label="Préécoute de l’enregistrement"></audio>
-  <div class="submit-zone"><button id="upload" type="button" class="ok" disabled>✓ Enregistrer sur le serveur</button></div>
+  <div class="submit-zone"><button id="upload" type="button" class="ok" disabled>✓ Enregistrer sur le serveur</button><button id="cancel" type="button" class="secondary" disabled>Annuler la capture</button></div>
 </section></div>
+<script src="/static/record_capture.js"></script>
 <script>
-let mediaRecorder, chunks=[], blob, stream, ctx, analyser, raf;
-const statusEl=document.getElementById("status"), start=document.getElementById("start"), stop=document.getElementById("stop"), upload=document.getElementById("upload"), preview=document.getElementById("preview"), meter=document.getElementById("meter"), level=meter.parentElement, orb=document.getElementById("recorder-orb"), utterance=document.getElementById("utterance");
-function updateScenario(){const option=utterance.options[utterance.selectedIndex];document.getElementById("scenario").textContent=option?.dataset.scenario||"Aucun scénario disponible."} utterance.addEventListener("change",updateScenario);updateScenario();
-async function begin(){try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});chunks=[];blob=null;let mime=MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":"audio/webm";mediaRecorder=new MediaRecorder(stream,{mimeType:mime});mediaRecorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};mediaRecorder.onstop=()=>{blob=new Blob(chunks,{type:mime});preview.src=URL.createObjectURL(blob);upload.disabled=false;stream.getTracks().forEach(t=>t.stop());cancelAnimationFrame(raf);if(ctx)ctx.close();orb.classList.remove("recording");statusEl.textContent=`Prêt à envoyer · ${(blob.size/1024).toFixed(1)} Ko`};mediaRecorder.start(250);start.disabled=true;stop.disabled=false;upload.disabled=true;orb.classList.add("recording");statusEl.textContent="Enregistrement en cours…";ctx=new AudioContext();const src=ctx.createMediaStreamSource(stream);analyser=ctx.createAnalyser();src.connect(analyser);analyser.fftSize=256;const arr=new Uint8Array(analyser.frequencyBinCount);function draw(){analyser.getByteFrequencyData(arr);const avg=arr.reduce((a,b)=>a+b,0)/arr.length;const value=Math.min(100,avg/1.2);meter.style.width=value+"%";level.setAttribute("aria-valuenow",Math.round(value));raf=requestAnimationFrame(draw)}draw()}catch(e){statusEl.textContent="Erreur micro : "+e.message}}
-function end(){if(mediaRecorder&&mediaRecorder.state==="recording")mediaRecorder.stop();start.disabled=false;stop.disabled=true}
-async function send(){if(!blob)return;upload.disabled=true;statusEl.textContent="Envoi et normalisation audio…";const fd=new FormData();fd.append("utterance_id",utterance.value);fd.append("take_number",document.getElementById("take").value);fd.append("condition",document.getElementById("condition").value);{% if user.role=="ADMIN" %}fd.append("participant_id",document.getElementById("participant").value);{% endif %}fd.append("audio",blob,"recording.webm");try{const res=await fetch("/api/recordings",{method:"POST",headers:{"X-CSRF-Token":decodeURIComponent(cookieValue("csrf_token"))},body:fd});const data=await res.json();if(res.ok){statusEl.textContent="Enregistré · "+data.audio_id;blob=null;preview.removeAttribute("src");preview.load();upload.disabled=true;document.getElementById("take").value=parseInt(document.getElementById("take").value)+1}else{statusEl.textContent="Erreur · "+(data.detail||"Envoi impossible");upload.disabled=false}}catch(e){statusEl.textContent="Connexion interrompue. Réessayez.";upload.disabled=false}}
-start.onclick=begin;stop.onclick=end;upload.onclick=send;
+const capture = new RecordingCapture.CaptureState();
+const statusEl = document.getElementById("status"), start = document.getElementById("start");
+const stop = document.getElementById("stop"), upload = document.getElementById("upload");
+const cancel = document.getElementById("cancel"), preview = document.getElementById("preview");
+const utterance = document.getElementById("utterance"), condition = document.getElementById("condition");
+const participant = document.getElementById("participant"), take = document.getElementById("take");
+const meter = document.getElementById("meter"), orb = document.getElementById("recorder-orb");
+let recorder, stream, context, raf, previewURL, cancelling = false;
+function selection() {
+  const values = {utterance_id: utterance.value, condition: condition.value};
+  if (participant) values.participant_id = participant.value;
+  return values;
+}
+function lock(value) {
+  [participant, utterance, condition].filter(Boolean).forEach(el => el.disabled = value);
+  start.disabled = value; cancel.disabled = !value;
+}
+const sequence = new RecordingCapture.PreviewSequence(async values => {
+  const response = await fetch("/api/recordings/next-take?" + new URLSearchParams(values), {cache: "no-store"});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Estimation indisponible");
+  return data;
+});
+function refreshTake() {
+  take.textContent = "Chargement…";
+  sequence.refresh(selection(), data => {
+    take.textContent = data.error ? "Estimation indisponible (attribution à l’envoi)" : "Prise estimée " + data.next_take_number;
+  });
+}
+function updateScenario() {
+  document.getElementById("scenario").textContent = utterance.selectedOptions[0]?.dataset.scenario || "Aucun scénario disponible.";
+}
+[participant, utterance, condition].filter(Boolean).forEach(el => el.addEventListener("change", () => {updateScenario(); refreshTake();}));
+function releaseMicro() {
+  stream?.getTracks().forEach(track => track.stop());
+  cancelAnimationFrame(raf); context?.close(); context = null;
+  orb.classList.remove("recording"); meter.style.width = "0%";
+}
+function resetCapture() {
+  releaseMicro(); capture.completed(); lock(false);
+  stop.disabled = true; upload.disabled = true; cancelling = false;
+  if (previewURL) URL.revokeObjectURL(previewURL);
+  previewURL = null; preview.removeAttribute("src"); preview.load();
+}
+async function begin() {
+  if (capture.locked) return;
+  try {
+    capture.begin(selection()); lock(true); cancelling = false;
+    const captureKey = capture.key;
+    const acquired = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    if (capture.key !== captureKey || cancelling || !capture.locked) {acquired.getTracks().forEach(track => track.stop()); return;}
+    stream = acquired;
+    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+    recorder = new MediaRecorder(stream, {mimeType:mime});
+    const chunks = [];
+    recorder.ondataavailable = e => {if (e.data.size) chunks.push(e.data);};
+    recorder.onstop = () => {
+      releaseMicro(); stop.disabled = true;
+      if (cancelling) {resetCapture(); return;}
+      capture.recorded(new Blob(chunks, {type:mime}));
+      previewURL = URL.createObjectURL(capture.blob); preview.src = previewURL;
+      upload.disabled = false; statusEl.textContent = "Prêt à envoyer.";
+    };
+    recorder.start(250); stop.disabled = false; upload.disabled = true;
+    orb.classList.add("recording"); statusEl.textContent = "Enregistrement en cours…";
+    context = new AudioContext();
+    const analyser = context.createAnalyser(); context.createMediaStreamSource(stream).connect(analyser);
+    analyser.fftSize = 256; const values = new Uint8Array(analyser.frequencyBinCount);
+    function draw() {
+      analyser.getByteFrequencyData(values);
+      const value = Math.min(100, values.reduce((a,b) => a+b, 0) / values.length / 1.2);
+      meter.style.width = value + "%"; meter.parentElement.setAttribute("aria-valuenow", Math.round(value));
+      raf = requestAnimationFrame(draw);
+    }
+    draw();
+  } catch (error) {resetCapture(); statusEl.textContent = "Erreur micro : " + error.message;}
+}
+async function send() {
+  const values = capture.submission(); if (!values) return;
+  upload.disabled = true; cancel.disabled = true;
+  statusEl.textContent = "Envoi et normalisation audio…";
+  const fd = new FormData(); Object.entries(values).forEach(([key,value]) => fd.append(key,value));
+  fd.append("audio", capture.blob, "recording.webm");
+  try {
+    const response = await fetch("/api/recordings", {method:"POST", headers:{"X-CSRF-Token":decodeURIComponent(cookieValue("csrf_token"))}, body:fd});
+    const data = await response.json();
+    if (response.ok && data.status === "READY") {
+      resetCapture(); statusEl.textContent = "Enregistré · prise " + data.take_number + " · " + data.audio_id; refreshTake();
+    } else {
+      capture.retry(); upload.disabled = false; cancel.disabled = false;
+      statusEl.textContent = data.status === "PENDING" ? "Traitement en cours. Réessayez avec ce même audio." : "Erreur · " + (data.detail || "Envoi impossible");
+      if (data.status === "ERROR") {
+        upload.disabled = true;
+        statusEl.textContent += " Le numéro reste consommé. Annulez puis démarrez une nouvelle capture.";
+      }
+      refreshTake();
+    }
+  } catch (error) {
+    capture.retry(); upload.disabled = false; cancel.disabled = false;
+    statusEl.textContent = "Connexion interrompue. Réessayez : la même clé sera conservée.";
+  }
+}
+start.onclick = begin;
+stop.onclick = () => {if (recorder?.state === "recording") recorder.stop();};
+cancel.onclick = () => {
+  if (capture.sending) return;
+  cancelling = true;
+  if (recorder?.state === "recording") recorder.stop();
+  else resetCapture();
+  statusEl.textContent = "Capture annulée."; refreshTake();
+};
+upload.onclick = send;
+updateScenario(); refreshTake();
 </script>{% endblock %}

@@ -13,6 +13,12 @@ Application web collaborative pour gérer la collecte, l'enregistrement, la tran
 
 ## Modèle clé
 
+La numérotation est attribuée atomiquement par PostgreSQL pour chaque combinaison
+`participant_id + utterance_id + condition` (1 à 999). Un rejet, une suppression ou un échec
+après réservation conserve le numéro consommé. L'affichage navigateur est une estimation.
+Les uploads utilisent une clé d'idempotence par capture ; `take_number` client est refusé.
+Voir [numérotation, contrat API, migration 0003 et réconciliation](docs/TAKE_SEQUENCES.md).
+
 Un **Participant** possède un `participant_code` stable, par exemple `MOS_S001`.
 Ce participant peut produire **autant d'enregistrements que nécessaire**.
 
@@ -129,7 +135,9 @@ FFMPEG_TIMEOUT_SECONDS=60
 ```
 
 Pour un test local en HTTP uniquement, utilisez temporairement `COOKIE_SECURE=false`.
-Après modification du modèle sur une installation déjà initialisée, prévoyez une migration PostgreSQL avant de conserver deux prises de même numéro avec des conditions différentes.
+La migration `0003_take_sequences` répare aussi les bases estampillées `0002` dont la contrainte
+de prise omet encore la condition. La déployer en maintenance, après sauvegarde et répétition
+isolée, avec frontend et API ensemble. Ne pas modifier les migrations déjà appliquées.
 
 ## P0-A
 
