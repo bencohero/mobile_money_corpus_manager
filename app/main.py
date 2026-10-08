@@ -2,22 +2,26 @@ import csv, io, logging, secrets, subprocess, tempfile, time, hashlib, uuid, wav
 from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .config import settings
 from .db import Base, engine, get_db, SessionLocal
-from .models import User, Participant, Utterance, Recording, Transcription, AuditLog, RecordingSubmission
+from .models import User, Participant, Utterance, Recording, Transcription, AuditLog, RecordingSubmission, Workshop, WorkshopCode
 from .take_sequence import next_take_estimate, TakeLimitReached
 from .recording_submission import reserve as reserve_recording, finish as finish_recording, mark_error as mark_recording_error, result as submission_result
 from .auth import verify_password, hash_password, create_token, get_current_user
 from .storage import ensure_bucket, put_file, get_bytes, delete_file, stat_file, list_files, verify_file
 from .seed import seed
 from .corpus_export import build_export, parse_filters, stream_file
+from .participant_registration import RegistrationError, register_participant, validate_password, workshop_code_hash
+from .rate_limit import login_limiter, registration_limiter
+from .schema_guard import SchemaRevisionError, assert_schema_current
+from .workshops import require_active_participant_workshop, workshop_is_open
 
 logger = logging.getLogger("mobile_money_corpus_manager")
 ALLOWED_AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/mpeg"}
@@ -57,12 +61,15 @@ def startup():
     for _ in range(20):
         try:
 
-            if settings.app_env == "development":
-                Base.metadata.create_all(engine)
+            with SessionLocal() as db:
+                assert_schema_current(db)
             ensure_bucket()
             with SessionLocal() as db:
                 seed(db)
             return
+        except SchemaRevisionError:
+            logger.error("Startup refused: database schema revision is not current")
+            raise
         except Exception as exc:
             logger.exception("Startup initialization attempt %s/20 failed: %s", _ + 1, exc)
             time.sleep(2)
@@ -119,8 +126,10 @@ def login_page(request: Request):
 @app.post("/login")
 def login(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...), db: Session = Depends(get_db)):
     check_csrf(request, csrf_token)
+    login_limiter.check(request, f"login:{username.casefold()}", record=False)
     user = db.query(User).filter_by(username=username).first()
-    if not user or not verify_password(password, user.password_hash):
+    if not user or not user.is_active or not verify_password(password, user.password_hash):
+        login_limiter.record(request, f"login:{username.casefold()}")
         return templates.TemplateResponse("login.html", {"request":request,"error":"Identifiants incorrects", "csrf_token":csrf_token}, status_code=401)
     token = create_token(user)
     resp = RedirectResponse("/", status_code=303)
@@ -128,6 +137,47 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
     set_csrf_cookie(resp, csrf_token)
     audit(db,user,"LOGIN","user",user.id)
     return resp
+
+
+@app.get("/participant/register", response_class=HTMLResponse)
+def participant_registration_page(request: Request):
+    token = new_csrf_token()
+    response = templates.TemplateResponse("participant_register.html", {"request": request, "csrf_token": token})
+    set_csrf_cookie(response, token)
+    return response
+
+
+@app.post("/api/auth/participant-registration")
+async def participant_registration_api(request: Request, db: Session = Depends(get_db)):
+    check_csrf(request)
+    registration_limiter.check(request, "participant-registration")
+    try:
+        if int(request.headers.get("content-length", "0")) > 8192:
+            raise HTTPException(413, "Requête d'inscription trop volumineuse.")
+    except ValueError:
+        raise HTTPException(400, "Requête d'inscription invalide.")
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(400, "Requête d'inscription invalide.")
+    try:
+        result = register_participant(db, payload)
+    except RegistrationError as exc:
+        raise HTTPException(400, str(exc))
+    except SQLAlchemyError:
+        correlation_id = operation_id(request)
+        logger.exception("Participant registration infrastructure failure", extra={"operation_id": correlation_id})
+        db.rollback()
+        return JSONResponse(
+            {"detail": "Le service d’inscription est temporairement indisponible.", "operation_id": correlation_id},
+            status_code=503,
+            headers={"X-Operation-ID": correlation_id},
+        )
+    return {
+        "login_id": result.login_id,
+        "role": "participant",
+        "message": "Compte participant créé avec succès.",
+    }
 
 @app.post("/logout")
 def logout(request: Request, csrf_token: str = Form(...)):
@@ -155,24 +205,32 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 @app.get("/participants", response_class=HTMLResponse)
 def participants(request: Request, db: Session = Depends(get_db)):
     user=require(request,db,["ADMIN"])
-    items=db.query(Participant).order_by(Participant.participant_code).all()
-    return templates.TemplateResponse("participants.html", {"request":request,"user":user,"items":items})
+    workshop_id = request.query_params.get("workshop_id")
+    query = db.query(Participant).order_by(Participant.participant_code)
+    if workshop_id:
+        try: query = query.filter(Participant.workshop_id == int(workshop_id))
+        except ValueError: raise HTTPException(400, "Atelier invalide")
+    items=query.all()
+    workshops=db.query(Workshop).order_by(Workshop.name).all()
+    return templates.TemplateResponse("participants.html", {"request":request,"user":user,"items":items,"workshops":workshops,"selected_workshop_id":workshop_id})
 
 @app.post("/participants")
 def create_participant(
     request: Request,
     participant_code: str=Form(...), username: str=Form(...), password: str=Form(...), csrf_token: str=Form(...),
     language: str=Form("mos"), age_group: str=Form(""), gender: str=Form(""),
-    region: str=Form(""), consent_obtained: bool=Form(False),
+    region: str=Form(""), consent_obtained: bool=Form(False), workshop_id: int | None=Form(None),
     db: Session=Depends(get_db)
 ):
     admin=require(request,db,["ADMIN"])
     check_csrf(request, csrf_token)
+    workshop = db.get(Workshop, workshop_id) if workshop_id else db.query(Workshop).filter(Workshop.is_active.is_(True)).order_by(Workshop.id).first()
+    if not workshop or not workshop_is_open(workshop): raise HTTPException(400,"Atelier invalide ou fermé")
     if db.query(Participant).filter_by(participant_code=participant_code).first():
         raise HTTPException(400,"participant_code déjà utilisé")
     if db.query(User).filter_by(username=username).first():
         raise HTTPException(400,"username déjà utilisé")
-    p=Participant(participant_code=participant_code,language=language,age_group=age_group or None,
+    p=Participant(workshop_id=workshop.id, participant_code=participant_code,language=language,age_group=age_group or None,
                   gender=gender or None,region=region or None,consent_obtained=consent_obtained)
     db.add(p); db.flush()
     u=User(username=username,password_hash=hash_password(password),role="PARTICIPANT",participant_id=p.id)
@@ -180,10 +238,41 @@ def create_participant(
     audit(db,admin,"CREATE_PARTICIPANT","participant",p.id,participant_code)
     return RedirectResponse("/participants",303)
 
+
+@app.post("/participants/{participant_id}/account-status")
+def set_participant_account_status(participant_id: int, request: Request, active: bool = Form(...), csrf_token: str = Form(...), db: Session = Depends(get_db)):
+    admin = require(request, db, ["ADMIN"])
+    check_csrf(request, csrf_token)
+    participant = db.get(Participant, participant_id)
+    if not participant or not participant.user:
+        raise HTTPException(404)
+    participant.user.is_active = active
+    db.commit()
+    audit(db, admin, "SET_PARTICIPANT_ACCOUNT_STATUS", "user", participant.user.id, f"active={active}")
+    return RedirectResponse("/participants", 303)
+
+
+@app.post("/participants/{participant_id}/reset-password")
+def reset_participant_password(participant_id: int, request: Request, password: str = Form(...), password_confirmation: str = Form(...), csrf_token: str = Form(...), db: Session = Depends(get_db)):
+    admin = require(request, db, ["ADMIN"])
+    check_csrf(request, csrf_token)
+    participant = db.get(Participant, participant_id)
+    if not participant or not participant.user:
+        raise HTTPException(404)
+    try:
+        new_password = validate_password(password, password_confirmation)
+    except RegistrationError as exc:
+        raise HTTPException(400, str(exc))
+    participant.user.password_hash = hash_password(new_password)
+    db.commit()
+    audit(db, admin, "RESET_PARTICIPANT_PASSWORD", "user", participant.user.id)
+    return RedirectResponse("/participants", 303)
+
 @app.get("/record", response_class=HTMLResponse)
 def record_page(request: Request, db: Session=Depends(get_db)):
     user=require(request,db,["PARTICIPANT","ADMIN"])
     if user.role=="PARTICIPANT":
+        require_active_participant_workshop(db, user)
         participant=db.get(Participant,user.participant_id)
         if not participant or not participant.consent_obtained:
             return templates.TemplateResponse("message.html",{"request":request,"user":user,"message":"Consentement non enregistré. Contactez l'administrateur."},status_code=403)
@@ -194,6 +283,8 @@ def record_page(request: Request, db: Session=Depends(get_db)):
     return templates.TemplateResponse("record.html",{"request":request,"user":user,"participant":participant,"participants":participants,"utterances":utterances})
 
 def recording_context(db, user, participant_id, utterance_id, condition):
+    if user.role == "PARTICIPANT":
+        require_active_participant_workshop(db, user)
     pid = user.participant_id if user.role == "PARTICIPANT" else participant_id
     if user.role == "PARTICIPANT" and participant_id is not None and participant_id != pid:
         raise HTTPException(403, "Participant non autorisé")
@@ -249,7 +340,7 @@ def upload_recording(
                 digest.update(chunk); target.write(chunk)
         if not size: raise HTTPException(400, "fichier audio vide")
         raw_sha = digest.hexdigest()
-        fingerprint = hashlib.sha256(f"{participant.id}:{utterance.id}:{condition}:{content_type}:{raw_sha}".encode()).hexdigest()
+        fingerprint = hashlib.sha256(f"{participant.id}:{participant.workshop_id}:{utterance.id}:{condition}:{content_type}:{raw_sha}".encode()).hexdigest()
         try:
             receipt, created = reserve_recording(db, uid, participant, utterance, condition, idempotency_key, fingerprint, suffix)
         except TakeLimitReached as exc:
@@ -314,8 +405,13 @@ def recordings_page(request: Request, db: Session=Depends(get_db)):
     q=db.query(Recording).filter(Recording.sync_status == "READY")
     if user.role=="PARTICIPANT":
         q=q.filter(Recording.participant_id==user.participant_id)
+    workshop_id = request.query_params.get("workshop_id")
+    if user.role=="ADMIN" and workshop_id:
+        try: q=q.filter(Recording.workshop_id == int(workshop_id))
+        except ValueError: raise HTTPException(400,"Atelier invalide")
     items=q.order_by(Recording.created_at.desc()).all()
-    return templates.TemplateResponse("recordings.html",{"request":request,"user":user,"items":items})
+    workshops=db.query(Workshop).order_by(Workshop.name).all() if user.role=="ADMIN" else []
+    return templates.TemplateResponse("recordings.html",{"request":request,"user":user,"items":items,"workshops":workshops,"selected_workshop_id":workshop_id})
 
 @app.get("/audio/{recording_id}")
 def audio(recording_id:int, request:Request, db:Session=Depends(get_db)):
@@ -350,6 +446,7 @@ def save_transcription(
     if not rec: raise HTTPException(404)
     if user.role=="PARTICIPANT" and rec.participant_id!=user.participant_id:
         raise HTTPException(403)
+    if user.role == "PARTICIPANT": require_active_participant_workshop(db, user)
     if rec.status == "VERIFIED" and user.role != "ADMIN":
         raise HTTPException(409,"Une transcription validée doit être rouverte par un administrateur")
     if rec.sync_status != "READY": raise HTTPException(409, "Audio non finalisé")
@@ -410,6 +507,94 @@ def create_user(request:Request,username:str=Form(...),password:str=Form(...),ro
     audit(db,admin,"CREATE_USER","user",u.id,role)
     return RedirectResponse("/users",303)
 
+
+def parse_optional_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(400, "Date d'atelier invalide.") from exc
+
+
+@app.get("/admin/workshop-codes", response_class=HTMLResponse)
+def workshop_codes_page(request: Request, db: Session = Depends(get_db)):
+    user = require(request, db, ["ADMIN"])
+    items = db.query(WorkshopCode).order_by(WorkshopCode.created_at.desc()).all()
+    workshops = db.query(Workshop).order_by(Workshop.name).all()
+    return templates.TemplateResponse("workshop_codes.html", {"request": request, "user": user, "items": items, "workshops": workshops})
+
+
+@app.post("/admin/workshop-codes", response_class=HTMLResponse)
+def create_workshop_code(request: Request, label: str = Form(...), starts_at: str = Form(""), expires_at: str = Form(""), max_registrations: str = Form(""), workshop_id: str = Form(""), csrf_token: str = Form(...), db: Session = Depends(get_db)):
+    admin = require(request, db, ["ADMIN"])
+    check_csrf(request, csrf_token)
+    label = label.strip()
+    if not label or len(label) > 120:
+        raise HTTPException(400, "Libellé invalide.")
+    start, expiry = parse_optional_datetime(starts_at), parse_optional_datetime(expires_at)
+    if start and expiry and expiry <= start:
+        raise HTTPException(400, "La date d'expiration doit suivre la date de début.")
+    try:
+        maximum = int(max_registrations) if max_registrations else None
+    except ValueError as exc:
+        raise HTTPException(400, "Limite invalide.") from exc
+    if maximum is not None and maximum < 1:
+        raise HTTPException(400, "Limite invalide.")
+    try:
+        selected_workshop_id = int(workshop_id) if workshop_id.strip() else None
+    except ValueError as exc:
+        raise HTTPException(400, "Atelier invalide") from exc
+    workshop = db.get(Workshop, selected_workshop_id) if selected_workshop_id else Workshop(name=label)
+    if selected_workshop_id and (not workshop or not workshop.is_active):
+        raise HTTPException(400, "Atelier invalide ou fermé")
+    if not selected_workshop_id:
+        db.add(workshop)
+        db.flush()
+    plain_code = "ATELIER-" + secrets.token_urlsafe(12)
+    item = WorkshopCode(workshop_id=workshop.id, label=label, code_hash=workshop_code_hash(plain_code), is_active=True,
+                        starts_at=start, expires_at=expiry, max_registrations=maximum,
+                        use_count=0, created_by_user_id=admin.id)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    audit(db, admin, "CREATE_WORKSHOP_CODE", "workshop_code", item.id)
+    items = db.query(WorkshopCode).order_by(WorkshopCode.created_at.desc()).all()
+    workshops = db.query(Workshop).order_by(Workshop.name).all()
+    return templates.TemplateResponse("workshop_codes.html", {
+        "request": request, "user": admin, "items": items, "workshops": workshops, "revealed_code": plain_code,
+    }, status_code=201)
+
+
+@app.post("/admin/workshop-codes/{code_id}/status")
+def set_workshop_code_status(code_id: int, request: Request, active: bool = Form(...), csrf_token: str = Form(...), db: Session = Depends(get_db)):
+    admin = require(request, db, ["ADMIN"])
+    check_csrf(request, csrf_token)
+    item = db.get(WorkshopCode, code_id)
+    if not item:
+        raise HTTPException(404)
+    item.is_active = active
+    item.disabled_at = None if active else datetime.utcnow()
+    db.commit()
+    audit(db, admin, "SET_WORKSHOP_CODE_STATUS", "workshop_code", item.id, f"active={active}")
+    return RedirectResponse("/admin/workshop-codes", 303)
+
+
+@app.post("/admin/workshops/{workshop_id}/status")
+def set_workshop_status(workshop_id: int, request: Request, active: bool = Form(...), csrf_token: str = Form(...), db: Session = Depends(get_db)):
+    admin = require(request, db, ["ADMIN"])
+    check_csrf(request, csrf_token)
+    workshop = db.get(Workshop, workshop_id)
+    if not workshop:
+        raise HTTPException(404)
+    workshop.is_active = active
+    workshop.disabled_at = None if active else datetime.utcnow()
+    workshop.disabled_by_user_id = None if active else admin.id
+    workshop.updated_at = datetime.utcnow()
+    db.commit()
+    audit(db, admin, "SET_WORKSHOP_STATUS", "workshop", workshop.id, f"active={active}")
+    return RedirectResponse("/admin/workshop-codes", 303)
+
 @app.post("/recordings/{recording_id}/delete")
 def delete_recording(recording_id: int, request: Request, csrf_token: str = Form(...), db: Session = Depends(get_db)):
     admin = require(request, db, ["ADMIN"])
@@ -441,13 +626,13 @@ def delete_recording(recording_id: int, request: Request, csrf_token: str = Form
 @app.get("/admin/export", response_class=HTMLResponse)
 def corpus_export_page(request: Request, db: Session = Depends(get_db)):
     user = require(request, db, ["ADMIN"])
-    return templates.TemplateResponse("export.html", {"request": request, "user": user})
+    return templates.TemplateResponse("export.html", {"request": request, "user": user, "workshops": db.query(Workshop).order_by(Workshop.name).all()})
 
 @app.post("/admin/export/corpus")
-def corpus_export(request: Request, mode: str = Form("work"), status: str = Form(""), verification_status: str = Form(""), condition: str = Form(""), participant: str = Form(""), intent: str = Form(""), has_transcription: str = Form(""), date_min: str = Form(""), date_max: str = Form(""), strict: str = Form("true"), csrf_token: str | None = Form(None), db: Session = Depends(get_db)):
+def corpus_export(request: Request, mode: str = Form("work"), status: str = Form(""), verification_status: str = Form(""), condition: str = Form(""), participant: str = Form(""), intent: str = Form(""), has_transcription: str = Form(""), date_min: str = Form(""), date_max: str = Form(""), workshop_id: str = Form(""), strict: str = Form("true"), csrf_token: str | None = Form(None), db: Session = Depends(get_db)):
     admin = require(request, db, ["ADMIN"])
     check_csrf(request, csrf_token)
-    filters = parse_filters(mode, status, verification_status, condition, participant, intent, has_transcription, date_min, date_max, strict)
+    filters = parse_filters(mode, status, verification_status, condition, participant, intent, has_transcription, date_min, date_max, strict, workshop_id)
     try:
         zip_path, prefix = build_export(db, filters)
     except HTTPException:
@@ -456,20 +641,26 @@ def corpus_export(request: Request, mode: str = Form("work"), status: str = Form
         logger.exception("Corpus export failed", extra={"operation_id": operation_id(request), "classification": getattr(exc, "classification", "export_error")})
         raise HTTPException(getattr(exc, "status_code", 502), getattr(exc, "message", "Export impossible, aucune archive n’a été envoyée"))
     filename = f"{prefix}.zip"
+    audit(db, admin, "EXPORT_RECORDINGS", "workshop", filters.get("workshop_id") or "all", f"mode={filters['mode']}")
     logger.info("Corpus export completed", extra={"admin_id": admin.id, "mode": filters["mode"], "filters": filters, "archive": filename})
     return StreamingResponse(stream_file(zip_path), media_type="application/zip", headers={"Content-Disposition": f"attachment; filename=\"{filename}\"", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 @app.get("/export/recordings.csv")
 def export_recordings(request:Request,db:Session=Depends(get_db)):
     require(request,db,["ADMIN"])
+    workshop_id = request.query_params.get("workshop_id")
+    query = db.query(Recording).filter(Recording.sync_status == "READY").order_by(Recording.id)
+    if workshop_id:
+        try: query = query.filter(Recording.workshop_id == int(workshop_id))
+        except ValueError: raise HTTPException(400, "Atelier invalide")
     out=io.StringIO()
     w=csv.writer(out)
-    w.writerow(["audio_id","participant_code","utterance_code","intent","condition","take_number",
+    w.writerow(["audio_id","workshop_id","workshop_name","participant_code","utterance_code","intent","condition","take_number",
                 "duration_ms","status","reference_transcription","normalized_transcription",
                 "verification_status","wav_object"])
-    for r in db.query(Recording).filter(Recording.sync_status == "READY").order_by(Recording.id).all():
+    for r in query.all():
         tr=r.transcription
-        w.writerow([r.audio_id,r.participant.participant_code,r.utterance.utterance_code,r.utterance.intent,
+        w.writerow([r.audio_id,r.workshop_id,r.workshop.name if r.workshop else "",r.participant.participant_code,r.utterance.utterance_code,r.utterance.intent,
                     r.condition,r.take_number,r.duration_ms,r.status,
                     tr.reference_transcription if tr else "",
                     tr.normalized_transcription if tr else "",

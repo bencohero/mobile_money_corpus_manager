@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block content %}
+<header class="page-head"><span class="eyebrow">Administration</span><h1>Codes d’atelier</h1><p>Créez et contrôlez les accès à l’auto-inscription.</p></header>
+{% if revealed_code %}<section class="card one-time-secret" role="status"><h2>Code créé — affichage unique</h2><p>Copiez-le maintenant : il ne sera plus affiché.</p><p class="login-id">{{ revealed_code }}</p></section>{% endif %}
+<section class="card form-card"><div class="section-head"><div><h2>Nouvel atelier</h2><p class="muted">Le code secret est généré par le serveur.</p></div></div>
+  <form method="post"><div class="form-grid">
+    <div class="field"><label for="label">Libellé <span aria-hidden="true">*</span></label><input id="label" name="label" maxlength="120" required></div>
+    <div class="field"><label for="workshop_id">Atelier existant</label><select id="workshop_id" name="workshop_id"><option value="">Créer un atelier</option>{% for w in workshops %}<option value="{{w.id}}">{{w.name}}</option>{% endfor %}</select></div>
+    <div class="field"><label for="max_registrations">Limite d’inscriptions</label><input id="max_registrations" name="max_registrations" type="number" min="1"></div>
+    <div class="field"><label for="starts_at">Début</label><input id="starts_at" name="starts_at" type="datetime-local"></div>
+    <div class="field"><label for="expires_at">Expiration</label><input id="expires_at" name="expires_at" type="datetime-local"></div>
+  </div><div class="form-actions"><button>Générer le code</button></div></form>
+</section>
+<section class="card"><div class="section-head"><div><h2>Ateliers existants</h2><p class="muted">Les empreintes ne permettent pas de réafficher les codes.</p></div></div>
+{% if items %}<div class="table-wrap"><table><thead><tr><th>Atelier</th><th>État</th><th>Période</th><th>Utilisations</th><th>Action</th></tr></thead><tbody>
+{% for item in items %}<tr><td><strong>{{ item.label }}</strong></td><td><span class="badge {{ 'status-verified' if item.is_active else 'status-rejected' }}">{{ 'Actif' if item.is_active else 'Inactif' }}</span></td><td>{{ item.starts_at or 'Immédiat' }} → {{ item.expires_at or 'Sans expiration' }}</td><td>{{ item.use_count }} / {{ item.max_registrations or '∞' }}</td><td><form method="post" action="/admin/workshop-codes/{{ item.id }}/status"><input type="hidden" name="active" value="{{ 'false' if item.is_active else 'true' }}"><button class="secondary">{{ 'Désactiver' if item.is_active else 'Activer' }}</button></form></td></tr>{% endfor %}
+</tbody></table></div>{% else %}<div class="empty-state"><h3>Aucun atelier</h3><p>Générez un premier code pour ouvrir les inscriptions.</p></div>{% endif %}</section>
+<section class="card"><div class="section-head"><div><h2>État des ateliers</h2><p class="muted">La désactivation conserve les données et bloque les actions métier des participants.</p></div></div><div class="table-wrap"><table><thead><tr><th>Atelier</th><th>État</th><th>Participants</th><th>Enregistrements</th><th></th></tr></thead><tbody>{% for w in workshops %}<tr><td>{{w.name}}</td><td>{{ 'Actif' if w.is_active else 'Désactivé' }}</td><td>{{w.participants|length}}</td><td>{{w.recordings|length}}</td><td><form method="post" action="/admin/workshops/{{w.id}}/status"><input type="hidden" name="active" value="{{ 'false' if w.is_active else 'true' }}"><button class="secondary">{{ 'Désactiver' if w.is_active else 'Réactiver' }}</button></form></td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

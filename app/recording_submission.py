@@ -35,20 +35,21 @@ def reserve(db, user_id, participant, utterance, condition, key, fingerprint, su
     operation = uuid.uuid4().hex
     now = datetime.utcnow()
     inserted = db.execute(insert(RecordingSubmission).values(
-        id=operation, user_id=user_id, participant_id=participant.id,
+        id=operation, user_id=user_id, participant_id=participant.id, workshop_id=participant.workshop_id,
         idempotency_key=key, fingerprint=fingerprint, state="PENDING",
         created_at=now, updated_at=now,
     ).on_conflict_do_nothing(constraint="uq_submission_user_key").returning(RecordingSubmission.id)).scalar_one_or_none()
     if inserted is None:
         receipt = db.scalar(select(RecordingSubmission).filter_by(user_id=user_id, idempotency_key=key))
-        if receipt.fingerprint != fingerprint or receipt.participant_id != participant.id:
+        if (receipt.fingerprint != fingerprint or receipt.participant_id != participant.id
+                or receipt.workshop_id != participant.workshop_id):
             db.rollback()
             raise HTTPException(409, "Clé d’idempotence déjà utilisée pour un autre audio ou contexte.")
         return detach(db, receipt), False
     number = allocate_next_take(db, participant.id, utterance.id, condition)
     audio_id = f"{participant.participant_code}_{utterance.utterance_code}_{condition}_T{number:02d}"
     # Numeric participant ID avoids user-supplied path fragments. UUID isolates operations.
-    rec = Recording(audio_id=audio_id, participant_id=participant.id, utterance_id=utterance.id,
+    rec = Recording(audio_id=audio_id, participant_id=participant.id, workshop_id=participant.workshop_id, utterance_id=utterance.id,
                     take_number=number, condition=condition, sync_status="PENDING",
                     raw_object=f"raw/{participant.id}/{operation}/source{suffix}",
                     wav_object=f"normalized/{participant.id}/{operation}/audio.wav")

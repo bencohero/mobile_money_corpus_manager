@@ -16,7 +16,7 @@
     <a href="/" {% if request.url.path == "/" %}class="active" aria-current="page"{% endif %}>Vue d’ensemble</a>
     {% if user.role in ["PARTICIPANT","ADMIN"] %}<a href="/record" {% if request.url.path == "/record" %}class="active" aria-current="page"{% endif %}>Enregistrer</a>{% endif %}
     <a href="/recordings" {% if request.url.path.startswith("/recordings") or request.url.path.startswith("/transcribe") %}class="active" aria-current="page"{% endif %}>Corpus</a>
-    {% if user.role=="ADMIN" %}<a href="/participants" {% if request.url.path == "/participants" %}class="active" aria-current="page"{% endif %}>Participants</a><a href="/users" {% if request.url.path == "/users" %}class="active" aria-current="page"{% endif %}>Équipe</a>{% endif %}
+    {% if user.role=="ADMIN" %}<a href="/participants" {% if request.url.path == "/participants" %}class="active" aria-current="page"{% endif %}>Participants</a><a href="/users" {% if request.url.path == "/users" %}class="active" aria-current="page"{% endif %}>Équipe</a><a href="/admin/workshop-codes" {% if request.url.path.startswith("/admin/workshop-codes") %}class="active" aria-current="page"{% endif %}>Ateliers</a>{% endif %}
   </div>
   <div class="nav-actions">
     {% if user.role=="ADMIN" %}<a class="icon-action" href="/admin/export" title="Exporter le corpus" aria-label="Exporter le corpus">↓ <span>Export</span></a>{% endif %}

@@ -19,7 +19,7 @@ après réservation conserve le numéro consommé. L'affichage navigateur est un
 Les uploads utilisent une clé d'idempotence par capture ; `take_number` client est refusé.
 Voir [numérotation, contrat API, migration 0003 et réconciliation](docs/TAKE_SEQUENCES.md).
 
-Un **Participant** possède un `participant_code` stable, par exemple `MOS_S001`.
+Un **Participant** auto-inscrit possède un `participant_code` stable au format `MOS_NNN`, par exemple `MOS_001`.
 Ce participant peut produire **autant d'enregistrements que nécessaire**.
 
 Relation :
@@ -38,7 +38,7 @@ Chaque enregistrement conserve :
 - transcription
 - validation
 
-Ainsi `MOS_S001` peut avoir `T01`, `T02`, `T03`, etc., sans jamais changer d'identifiant participant.
+Ainsi `MOS_001` peut avoir `T01`, `T02`, `T03`, etc., sans jamais changer d'identifiant participant.
 
 ## Rôles
 
@@ -116,6 +116,10 @@ ALTER USER corpus WITH PASSWORD 'nouveau_mot_de_passe';
 9. Participant ou transcripteur saisit la transcription exacte.
 10. Un validateur vérifie.
 11. L'admin exporte le corpus pour le benchmark.
+
+## Auto-inscription participant
+
+L'administrateur génère un code à usage contrôlé dans `/admin/workshop-codes`. Le participant ouvre `/participant/register`, renseigne son profil et choisit son mot de passe. PostgreSQL attribue atomiquement un identifiant `MOS_001`, `MOS_002`, …, `MOS_1000`, sans réutilisation. Voir [architecture, sécurité, migration et exploitation](docs/PARTICIPANT_SELF_REGISTRATION.md).
 
 ## Données sensibles
 

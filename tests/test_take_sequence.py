@@ -15,7 +15,7 @@ from starlette.testclient import TestClient
 
 from app import main, storage
 from app.db import SessionLocal, engine
-from app.models import Participant, Utterance, Recording, User
+from app.models import Participant, Utterance, Recording, User, Workshop
 from app.auth import create_token
 
 
@@ -32,12 +32,14 @@ def scope():
     assert engine.url.host == "db-test" and engine.url.database == "p0a2_test"
     tag = uuid.uuid4().hex[:12]
     with SessionLocal() as db:
-        ps = [Participant(participant_code=f"SEQ_{tag}_{i}", consent_obtained=True) for i in range(2)]
+        workshop = Workshop(name=f"Sequence test {tag}")
+        db.add(workshop); db.flush()
+        ps = [Participant(workshop_id=workshop.id, participant_code=f"SEQ_{tag}_{i}", consent_obtained=True) for i in range(2)]
         us = [Utterance(utterance_code=f"SEQ_{tag}_{i}", intent="SAME", scenario_fr="Synthetic") for i in range(2)]
         db.add_all(ps + us); db.flush()
         user = User(username=f"SEQ_{tag}", password_hash="unused", role="ADMIN")
         db.add(user); db.commit()
-        ids = ([p.id for p in ps], [u.id for u in us], user.id)
+        ids = ([p.id for p in ps], [u.id for u in us], user.id, workshop.id)
     yield ids
     with SessionLocal() as db:
         for rec in db.query(Recording).filter(Recording.participant_id.in_(ids[0])):
@@ -50,6 +52,7 @@ def scope():
         db.query(User).filter_by(id=ids[2]).delete()
         db.query(Participant).filter(Participant.id.in_(ids[0])).delete()
         db.query(Utterance).filter(Utterance.id.in_(ids[1])).delete()
+        db.delete(db.get(Workshop, ids[3]))
         db.commit()
 
 

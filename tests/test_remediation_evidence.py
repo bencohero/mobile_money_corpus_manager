@@ -18,7 +18,7 @@ from starlette.testclient import TestClient
 from app import main, storage
 from app.auth import hash_password
 from app.db import SessionLocal
-from app.models import AuditLog, Participant, Recording, User, RecordingTakeCounter, RecordingSubmission
+from app.models import AuditLog, Participant, Recording, User, RecordingTakeCounter, RecordingSubmission, Workshop
 from scripts.reconcile import classify_storage_error
 
 
@@ -40,13 +40,15 @@ def login(client, username, password):
 def seed_users():
     suffix = uuid.uuid4().hex[:10]
     with SessionLocal() as db:
-        participant = Participant(participant_code=f"REMED_{suffix}", language="mos", consent_obtained=True)
+        workshop = Workshop(name=f"Remediation test {suffix}")
+        db.add(workshop); db.flush()
+        participant = Participant(workshop_id=workshop.id, participant_code=f"REMED_{suffix}", language="mos", consent_obtained=True)
         db.add(participant); db.flush()
         owner = User(username=f"owner_{suffix}", password_hash=hash_password("owner-password-only"), role="PARTICIPANT", participant_id=participant.id)
         transcriber = User(username=f"trans_{suffix}", password_hash=hash_password("trans-password-only"), role="TRANSCRIBER")
         validator = User(username=f"valid_{suffix}", password_hash=hash_password("valid-password-only"), role="VALIDATOR")
         db.add_all([owner, transcriber, validator]); db.commit()
-        return participant.id, participant.participant_code, owner.username, transcriber.username, validator.username
+        return participant.id, participant.participant_code, owner.username, transcriber.username, validator.username, workshop.id
 
 
 @pytest.fixture
@@ -57,7 +59,7 @@ def context():
             yield client, ids
     finally:
         with SessionLocal() as db:
-            users = db.query(User).filter(User.username.in_(ids[2:])).all()
+            users = db.query(User).filter(User.username.in_(ids[2:5])).all()
             participant = db.get(Participant, ids[0])
             db.query(AuditLog).filter(AuditLog.user_id.in_([u.id for u in users])).delete(synchronize_session=False)
             db.query(RecordingSubmission).filter_by(participant_id=ids[0]).delete()
@@ -70,7 +72,9 @@ def context():
                         try: storage.delete_file(name)
                         except Exception: pass
                     db.delete(rec)
-                db.delete(participant)
+            workshop = db.get(Workshop, ids[5])
+            db.delete(participant)
+            if workshop: db.delete(workshop)
             db.commit()
 
 

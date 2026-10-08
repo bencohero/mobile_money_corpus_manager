@@ -17,7 +17,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from . import storage
-from .models import Recording
+from .models import Recording, Workshop
 
 logger = logging.getLogger("mobile_money_corpus_manager.export")
 EXPORT_SCHEMA = "1.0"
@@ -26,7 +26,7 @@ MAX_EXPORT_RECORDINGS = 10000
 MAX_EXPORT_BYTES = 20 * 1024 * 1024 * 1024
 
 RECORDING_COLUMNS = [
-    "audio_id", "file_name", "relative_audio_path", "participant_code", "utterance_code",
+    "audio_id", "workshop_id", "workshop_name", "file_name", "relative_audio_path", "participant_code", "utterance_code",
     "intent", "condition", "take_number", "duration_ms", "duration_sec", "status",
     "reference_transcription", "normalized_transcription", "verification_status",
     "sample_rate_hz", "channels", "sample_width_bits", "wav_size_bytes", "wav_sha256",
@@ -64,7 +64,7 @@ def classify_storage_error(exc):
 
 
 def parse_filters(mode, status, verification_status, condition, participant, intent,
-                  has_transcription, date_min, date_max, strict):
+                  has_transcription, date_min, date_max, strict, workshop_id=""):
     if mode not in {"work", "benchmark"}:
         raise HTTPException(400, "mode invalide")
     if status and status not in {"RECORDED", "TRANSCRIBED", "NEEDS_REVIEW", "VERIFIED", "REJECTED"}:
@@ -84,10 +84,15 @@ def parse_filters(mode, status, verification_status, condition, participant, int
         raise HTTPException(400, "intervalle de dates invalide")
     if strict not in {"true", "false"}:
         raise HTTPException(400, "strict doit valoir true ou false")
+    if workshop_id:
+        try: workshop_id = int(workshop_id)
+        except (TypeError, ValueError): raise HTTPException(400, "atelier invalide")
+        if workshop_id < 1: raise HTTPException(400, "atelier invalide")
     return {"mode": mode, "status": status or None, "verification_status": verification_status or None,
             "condition": condition or None, "participant": participant or None, "intent": intent or None,
             "has_transcription": None if not has_transcription else has_transcription == "true",
-            "date_min": date_min or None, "date_max": date_max or None, "strict": strict == "true"}
+            "date_min": date_min or None, "date_max": date_max or None, "workshop_id": workshop_id or None,
+            "strict": strict == "true"}
 
 
 def _csv_value(value, raw=False):
@@ -165,6 +170,7 @@ def _query(db, filters):
     query = db.query(Recording).filter(Recording.sync_status == "READY").order_by(Recording.id)
     if filters["status"]: query = query.filter(Recording.status == filters["status"])
     if filters["condition"]: query = query.filter(Recording.condition == filters["condition"])
+    if filters.get("workshop_id"): query = query.filter(Recording.workshop_id == filters["workshop_id"])
     if filters["participant"]: query = query.join(Recording.participant).filter_by(participant_code=filters["participant"])
     if filters["intent"]: query = query.join(Recording.utterance).filter_by(intent=filters["intent"])
     records = query.all()
@@ -239,7 +245,8 @@ def build_export(db: Session, filters):
             for rec, tr, rel, audio, local in included:
                 archive.write(local, prefix + "/" + rel)
                 row = {
-                    "audio_id": rec.audio_id, "file_name": Path(rel).name, "relative_audio_path": rel,
+                    "audio_id": rec.audio_id, "workshop_id": getattr(rec, "workshop_id", "") or "", "workshop_name": getattr(getattr(rec, "workshop", None), "name", "") or "",
+                    "file_name": Path(rel).name, "relative_audio_path": rel,
                     "participant_code": rec.participant.participant_code, "utterance_code": rec.utterance.utterance_code,
                     "intent": rec.utterance.intent, "condition": rec.condition, "take_number": rec.take_number,
                     "duration_ms": round(audio["duration_sec"] * 1000), "duration_sec": round(audio["duration_sec"], 6),
@@ -270,6 +277,8 @@ def build_export(db: Session, filters):
             manifest = {"schema_version": EXPORT_SCHEMA, "export_id": export_id, "generated_at": generated_at,
                 "mode": filters["mode"], "filters": filters, "recording_count": len(rows),
                 "participant_count": len({r["participant_code"] for r in rows}),
+                "workshops": [{"id": workshop_id, "name": workshop_name}
+                    for workshop_id, workshop_name in {tuple((x["workshop_id"], x["workshop_name"])) for x in rows}],
                 "total_duration_sec": round(sum(r["duration_sec"] for r in rows), 6),
                 "conditions": dict(Counter(r["condition"] or "UNKNOWN" for r in rows)),
                 "statuses": dict(Counter(r["status"] for r in rows)),

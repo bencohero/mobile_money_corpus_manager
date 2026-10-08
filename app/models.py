@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import String, Text, Integer, Boolean, DateTime, ForeignKey, UniqueConstraint, CheckConstraint
+from sqlalchemy import String, Text, Integer, Boolean, DateTime, ForeignKey, UniqueConstraint, CheckConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
@@ -24,13 +24,14 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(30), default=Role.PARTICIPANT.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id"), nullable=True)
+    participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id"), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     participant = relationship("Participant", back_populates="user", uselist=False)
 
 class Participant(Base):
     __tablename__ = "participants"
     id: Mapped[int] = mapped_column(primary_key=True)
+    workshop_id: Mapped[int] = mapped_column(ForeignKey("workshops.id", ondelete="RESTRICT"), index=True, nullable=False)
     participant_code: Mapped[str] = mapped_column(String(30), unique=True, index=True)
     language: Mapped[str] = mapped_column(String(10), default="mos")
     age_group: Mapped[str | None] = mapped_column(String(30), nullable=True)
@@ -41,6 +42,47 @@ class Participant(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     user = relationship("User", back_populates="participant", uselist=False)
     recordings = relationship("Recording", back_populates="participant")
+    workshop = relationship("Workshop", back_populates="participants")
+
+
+class Workshop(Base):
+    __tablename__ = "workshops"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    capacity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    disabled_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    participants = relationship("Participant", back_populates="workshop")
+    recordings = relationship("Recording", back_populates="workshop")
+    codes = relationship("WorkshopCode", back_populates="workshop")
+
+
+class WorkshopCode(Base):
+    __tablename__ = "workshop_codes"
+    __table_args__ = (
+        CheckConstraint("max_registrations IS NULL OR max_registrations > 0", name="ck_workshop_max_positive"),
+        CheckConstraint("use_count >= 0", name="ck_workshop_use_count_nonnegative"),
+        CheckConstraint("max_registrations IS NULL OR use_count <= max_registrations", name="ck_workshop_limit"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workshop_id: Mapped[int] = mapped_column(ForeignKey("workshops.id", ondelete="RESTRICT"), index=True, nullable=False)
+    label: Mapped[str] = mapped_column(String(120))
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    max_registrations: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    use_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+    workshop = relationship("Workshop", back_populates="codes")
 
 class Utterance(Base):
     __tablename__ = "utterances"
@@ -62,8 +104,12 @@ class Recording(Base):
     __table_args__ = (
         UniqueConstraint("participant_id", "utterance_id", "condition", "take_number", name="uq_recording_take"),
         CheckConstraint("take_number BETWEEN 1 AND 999", name="ck_recordings_take_range"),
+        Index("ix_recordings_workshop_created_at", "workshop_id", "created_at"),
+        Index("ix_recordings_workshop_validation", "workshop_id", "status"),
+        Index("ix_recordings_workshop_participant", "workshop_id", "participant_id"),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
+    workshop_id: Mapped[int] = mapped_column(ForeignKey("workshops.id", ondelete="RESTRICT"), index=True, nullable=False)
     audio_id: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id"), index=True)
     utterance_id: Mapped[int] = mapped_column(ForeignKey("utterances.id"), index=True)
@@ -83,6 +129,7 @@ class Recording(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     participant = relationship("Participant", back_populates="recordings")
+    workshop = relationship("Workshop", back_populates="recordings")
     utterance = relationship("Utterance")
     transcription = relationship("Transcription", back_populates="recording", uselist=False)
 
@@ -104,6 +151,7 @@ class RecordingSubmission(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id", ondelete="RESTRICT"))
+    workshop_id: Mapped[int] = mapped_column(ForeignKey("workshops.id", ondelete="RESTRICT"), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128))
     fingerprint: Mapped[str] = mapped_column(String(64))
     recording_id: Mapped[int | None] = mapped_column(ForeignKey("recordings.id", ondelete="SET NULL"), nullable=True, unique=True)

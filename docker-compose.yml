@@ -44,6 +44,8 @@ services:
       target: runtime
     restart: unless-stopped
     env_file: .env
+    environment:
+      APP_ENV: production
     user: "10001:10001"
     depends_on:
       db:

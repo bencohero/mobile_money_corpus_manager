@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
 
     jwt_secret: str
+    workshop_code_secret: str | None = None
     access_token_minutes: int = 720
     cookie_secure: bool = True
     max_audio_mb: int = 50
@@ -44,15 +45,19 @@ class Settings(BaseSettings):
         if self.ffmpeg_timeout_seconds < 1 or self.ffprobe_timeout_seconds < 1 or self.max_concurrent_conversions < 1:
             raise ValueError("Audio limits and timeouts must be positive")
         if self.app_env == "production":
-            forbidden = {"change_me", "change_this_db_password", "change_this_minio_password", "minioadmin", "changemenow!"}
+            forbidden = {"change_me", "change_this_db_password", "change_this_minio_password"}
             if len(self.jwt_secret) < 32 or self.jwt_secret.lower() in forbidden:
                 raise ValueError("JWT_SECRET must be strong and non-example in production")
+            if not self.workshop_code_secret or len(self.workshop_code_secret) < 32 or self.workshop_code_secret.lower() in forbidden:
+                raise ValueError("WORKSHOP_CODE_SECRET must be strong and non-example in production")
+            if self.workshop_code_secret == self.jwt_secret:
+                raise ValueError("WORKSHOP_CODE_SECRET must be distinct from JWT_SECRET in production")
             if not self.postgres_db or not self.postgres_user or not self.postgres_password or self.postgres_user.lower() in forbidden or self.postgres_password.lower() in forbidden:
                 raise ValueError("Explicit PostgreSQL credentials are required in production")
             minio_user = self.minio_root_user or self.minio_access_key
             minio_password = self.minio_root_password or self.minio_secret_key
             if not minio_user or not minio_password or minio_user.lower() in forbidden or minio_password.lower() in forbidden:
-                raise ValueError("Explicit MinIO credentials are required in production")
+                raise ValueError("Explicit non-default MinIO credentials are required in production")
             if len(self.admin_password) < 12 or self.admin_password.lower() in forbidden or not self.cookie_secure:
                 raise ValueError("Strong admin password and secure cookies are required in production")
         return self

@@ -2,7 +2,7 @@
 <header class="page-head"><span class="eyebrow">Capture audio</span><h1>Nouvel enregistrement</h1><p class="muted">Préparez la prise, contrôlez le niveau sonore puis validez l’audio.</p></header>
 <div class="capture-layout">
 <section class="card setup-panel"><div class="step-label"><span>1</span> Préparer la prise</div>
-  {% if participant %}<div class="participant-chip"><span class="avatar">{{participant.participant_code[0]}}</span><span><small>Participant</small><strong>{{participant.participant_code}}</strong></span></div>{% endif %}
+  {% if participant %}<div class="participant-chip"><span class="avatar">{{participant.participant_code[0]}}</span><span><small>Participant · {{participant.workshop.name if participant.workshop else "Atelier indisponible"}}</small><strong>{{participant.participant_code}}</strong></span></div>{% endif %}
   {% if user.role=="ADMIN" %}<div class="field"><label for="participant">Participant</label><select id="participant">{% for p in participants %}<option value="{{p.id}}">{{p.participant_code}}</option>{% endfor %}</select></div>{% endif %}
   <div class="field"><label for="utterance">Commande ou scénario</label><select id="utterance">{% for u in utterances %}<option value="{{u.id}}" data-scenario="{{u.scenario_fr}}">{{u.utterance_code}} — {{u.intent}}</option>{% endfor %}</select></div>
   <div id="scenario" class="scenario-box" aria-live="polite"></div>
