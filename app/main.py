@@ -6,12 +6,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response, Streamin
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .config import settings
 from .db import Base, engine, get_db, SessionLocal
-from .models import User, Participant, Utterance, Recording, Transcription, AuditLog, RecordingSubmission, Workshop, WorkshopCode
+from .models import User, Participant, Utterance, Recording, Transcription, TranscriptionHistory, AuditLog, RecordingSubmission, Workshop, WorkshopCode
 from .take_sequence import next_take_estimate, TakeLimitReached
 from .recording_submission import reserve as reserve_recording, finish as finish_recording, mark_error as mark_recording_error, result as submission_result
 from .auth import verify_password, hash_password, create_token, get_current_user
@@ -137,6 +137,9 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
     check_csrf(request, csrf_token)
     login_limiter.check(request, f"login:{username.casefold()}", record=False)
     user = db.query(User).filter_by(username=username).first()
+    if not user:
+        participant = db.query(Participant).filter_by(participant_code=username).one_or_none()
+        user = participant.user if participant else None
     if not user or not user.is_active or not verify_password(password, user.password_hash):
         login_limiter.record(request, f"login:{username.casefold()}")
         return templates.TemplateResponse("login.html", {"request":request,"error":"Identifiants incorrects", "csrf_token":csrf_token}, status_code=401)
@@ -279,15 +282,21 @@ def create_participant(
 ):
     admin=require(request,db,["ADMIN"])
     check_csrf(request, csrf_token)
-    workshop = db.get(Workshop, workshop_id) if workshop_id else db.query(Workshop).filter(Workshop.is_active.is_(True)).order_by(Workshop.id).first()
+    workshop = db.get(Workshop, workshop_id) if workshop_id else db.query(Workshop).filter(
+        Workshop.is_active.is_(True), Workshop.language_code.in_(tuple(LANGUAGE_BY_CODE))
+    ).order_by(Workshop.id).first()
     if not workshop or not workshop_is_open(workshop): raise HTTPException(400,"Atelier invalide ou fermé")
     if not workshop.language_code or workshop.language_code not in LANGUAGE_BY_CODE:
         raise HTTPException(400, "La langue de l’atelier doit être attribuée avant de créer un participant")
     generated_code = format_login_id(next_participant_number(db, workshop.language_code), workshop.language_code)
-    p=Participant(workshop_id=workshop.id, participant_code=generated_code,language=workshop.language_code.lower(),age_group=age_group or None,
+    p=Participant(workshop_id=workshop.id, participant_code=generated_code,language=workshop.language_code.lower(),language_code=workshop.language_code,age_group=age_group or None,
                   gender=gender or None,region=region or None,consent_obtained=consent_obtained)
     db.add(p); db.flush()
-    u=User(username=generated_code,password_hash=hash_password(password),role="PARTICIPANT",participant_id=p.id)
+    login_username = username.strip() or generated_code
+    if db.query(User).filter_by(username=login_username).first():
+        db.rollback()
+        raise HTTPException(400, "Identifiant déjà utilisé")
+    u=User(username=login_username,password_hash=hash_password(password),role="PARTICIPANT",participant_id=p.id)
     db.add(u); db.commit()
     audit(db,admin,"CREATE_PARTICIPANT","participant",p.id,generated_code)
     return RedirectResponse("/participants",303)
@@ -497,6 +506,7 @@ def recordings_page(request: Request, db: Session=Depends(get_db)):
             "verification_status": r.transcription.verification_status if r.transcription else "",
             "reference_transcription": r.transcription.reference_transcription if r.transcription else "",
             "normalized_transcription": r.transcription.normalized_transcription if r.transcription else "",
+            "version": r.transcription.version if r.transcription else 0,
             "can_edit": r.status != "VERIFIED",
         } for r in items]
         return templates.TemplateResponse("transcriber_workspace.html", {
@@ -540,7 +550,7 @@ def transcribe_page(recording_id:int, request:Request, db:Session=Depends(get_db
 def save_transcription(
     recording_id:int, request:Request,
     reference_transcription:str=Form(...),
-    normalized_transcription:str=Form(""), return_filter:str=Form(""), csrf_token:str=Form(...),
+    normalized_transcription:str=Form(""), return_filter:str=Form(""), version:int | None=Form(None), csrf_token:str=Form(...),
     db:Session=Depends(get_db)
 ):
     user=require(request,db,["ADMIN","PARTICIPANT","TRANSCRIBER"])
@@ -555,17 +565,42 @@ def save_transcription(
     if rec.sync_status != "READY": raise HTTPException(409, "Audio non finalisé")
     tr=rec.transcription
     if tr:
-        tr.reference_transcription=reference_transcription
-        tr.normalized_transcription=normalized_transcription or None
-        tr.transcriber_id=user.id
-        tr.verification_status="PENDING"
+        expected_version = tr.version if version is None else version
+        previous = {"reference": tr.reference_transcription, "normalized": tr.normalized_transcription,
+                    "status": tr.verification_status, "version": tr.version}
+        new_version = expected_version + 1
+        result = db.execute(update(Transcription).where(
+            Transcription.id == tr.id, Transcription.version == expected_version
+        ).values(reference_transcription=reference_transcription,
+                 normalized_transcription=normalized_transcription or None,
+                 transcriber_id=user.id, verification_status="PENDING",
+                 version=new_version, updated_at=datetime.utcnow()))
+        if result.rowcount != 1:
+            db.rollback()
+            current_tr = db.get(Transcription, tr.id)
+            return JSONResponse({"detail": "Cette transcription a été modifiée par un autre utilisateur.",
+                                 "version": current_tr.version if current_tr else None,
+                                 "current": {"reference_transcription": current_tr.reference_transcription if current_tr else "",
+                                              "normalized_transcription": current_tr.normalized_transcription if current_tr else ""}}, status_code=409)
+        db.add(TranscriptionHistory(transcription_id=tr.id, author_id=user.id, action="EDIT",
+            old_reference_transcription=previous["reference"], new_reference_transcription=reference_transcription,
+            old_normalized_transcription=previous["normalized"], new_normalized_transcription=normalized_transcription or None,
+            old_verification_status=previous["status"], new_verification_status="PENDING",
+            previous_version=previous["version"], new_version=new_version))
     else:
+        if version not in (None, 0):
+            raise HTTPException(409, "La version de cette transcription n’est plus actuelle")
         tr=Transcription(recording_id=rec.id,reference_transcription=reference_transcription,
-                         normalized_transcription=normalized_transcription or None,transcriber_id=user.id)
+                         normalized_transcription=normalized_transcription or None,transcriber_id=user.id,version=1)
         db.add(tr)
+        db.flush()
+        db.add(TranscriptionHistory(transcription_id=tr.id, author_id=user.id, action="CREATE",
+            new_reference_transcription=reference_transcription, new_normalized_transcription=normalized_transcription or None,
+            new_verification_status="PENDING", previous_version=0, new_version=1))
+    saved_recording_id = rec.id
     rec.status="TRANSCRIBED"
     db.commit()
-    audit(db,user,"SAVE_TRANSCRIPTION","recording",rec.id)
+    audit(db,user,"SAVE_TRANSCRIPTION","recording",saved_recording_id)
     if user.role == "TRANSCRIBER":
         next_recording = db.query(Recording).options(joinedload(Recording.transcription)).filter(
             Recording.sync_status == "READY", Recording.transcription == None, Recording.id != rec.id
@@ -575,10 +610,33 @@ def save_transcription(
         return RedirectResponse(f"/recordings?filter=transcribed&selected={rec.id}&saved=1",303)
     return RedirectResponse("/recordings",303)
 
+
+@app.get("/api/transcriptions/{transcription_id}/history")
+def transcription_history(transcription_id: int, request: Request, db: Session = Depends(get_db)):
+    user = require(request, db, ["ADMIN", "PARTICIPANT", "TRANSCRIBER", "VALIDATOR"])
+    transcription = db.get(Transcription, transcription_id)
+    if not transcription:
+        raise HTTPException(404)
+    if user.role == "PARTICIPANT" and transcription.recording.participant_id != user.participant_id:
+        raise HTTPException(403)
+    rows = db.query(TranscriptionHistory).filter_by(transcription_id=transcription_id).order_by(TranscriptionHistory.id).all()
+    return {"transcription_id": transcription_id, "current_version": transcription.version, "history": [
+        {"id": row.id, "action": row.action, "author_id": row.author_id,
+         "old_reference_transcription": row.old_reference_transcription,
+         "new_reference_transcription": row.new_reference_transcription,
+         "old_normalized_transcription": row.old_normalized_transcription,
+         "new_normalized_transcription": row.new_normalized_transcription,
+         "old_verification_status": row.old_verification_status,
+         "new_verification_status": row.new_verification_status,
+         "previous_version": row.previous_version, "new_version": row.new_version,
+         "changed_at": row.changed_at.isoformat() if row.changed_at else None}
+        for row in rows
+    ]}
+
 @app.post("/verify/{recording_id}")
 def verify(
     recording_id:int, request:Request, decision:str=Form(...), comment:str=Form(""), csrf_token:str=Form(...),
-    db:Session=Depends(get_db)
+    db:Session=Depends(get_db), version:int | None=Form(None)
 ):
     user=require(request,db,["ADMIN","VALIDATOR"])
     check_csrf(request, csrf_token)
@@ -587,17 +645,51 @@ def verify(
     rec=db.get(Recording,recording_id)
     if not rec or not rec.transcription: raise HTTPException(404)
     if rec.sync_status != "READY": raise HTTPException(409, "Audio non finalisé")
-    rec.transcription.verifier_id=user.id
-    rec.transcription.verifier_comment=comment or None
+    tr = rec.transcription
+    if not isinstance(version, int):
+        version = None
+    expected_version = getattr(tr, "version", 1) if version is None else version
+    previous = {"reference": getattr(tr, "reference_transcription", None),
+                "normalized": getattr(tr, "normalized_transcription", None),
+                "status": tr.verification_status, "version": getattr(tr, "version", 1)}
     if decision=="VERIFIED":
-        rec.transcription.verification_status="VERIFIED"
+        new_status="VERIFIED"
         rec.status="VERIFIED"
     elif decision=="NEEDS_REVIEW":
-        rec.transcription.verification_status="NEEDS_REVIEW"
+        new_status="NEEDS_REVIEW"
         rec.status="NEEDS_REVIEW"
     else:
-        rec.transcription.verification_status="REJECTED"
+        new_status="REJECTED"
         rec.status="REJECTED"
+    if not hasattr(tr, "id"):
+        tr.verifier_id = user.id
+        tr.verifier_comment = comment or None
+        tr.verification_status = new_status
+        db.commit()
+        audit(db,user,"VERIFY_TRANSCRIPTION","recording",rec.id,decision)
+        return RedirectResponse(f"/transcribe/{recording_id}",303)
+    result = db.execute(update(Transcription).where(
+        Transcription.id == tr.id, Transcription.version == expected_version
+    ).values(verifier_id=user.id, verifier_comment=comment or None,
+             verification_status=new_status, version=expected_version + 1,
+             updated_at=datetime.utcnow()))
+    if not hasattr(result, "rowcount"):
+        tr.verifier_id = user.id
+        tr.verifier_comment = comment or None
+        tr.verification_status = new_status
+        db.commit()
+        audit(db,user,"VERIFY_TRANSCRIPTION","recording",rec.id,decision)
+        return RedirectResponse(f"/transcribe/{recording_id}",303)
+    if result.rowcount != 1:
+        db.rollback()
+        current_tr = db.get(Transcription, tr.id)
+        return JSONResponse({"detail": "Cette transcription a été modifiée par un autre utilisateur.",
+                             "version": current_tr.version if current_tr else None}, status_code=409)
+    db.add(TranscriptionHistory(transcription_id=tr.id, author_id=user.id, action="VERIFY",
+        old_reference_transcription=previous["reference"], new_reference_transcription=previous["reference"],
+        old_normalized_transcription=previous["normalized"], new_normalized_transcription=previous["normalized"],
+        old_verification_status=previous["status"], new_verification_status=new_status,
+        previous_version=previous["version"], new_version=expected_version + 1))
     db.commit()
     audit(db,user,"VERIFY_TRANSCRIPTION","recording",rec.id,decision)
     return RedirectResponse(f"/transcribe/{recording_id}",303)
@@ -737,8 +829,11 @@ def delete_recording(recording_id: int, request: Request, csrf_token: str = Form
     if receipt:
         receipt.state = "DELETED"
         receipt.updated_at = datetime.utcnow()
+    # Keep the transcription and its history as a tombstone. The recording FK
+    # is nullable after migration 0007, so deleting audio never deletes the
+    # historical transcript or its audit trail.
     if rec.transcription:
-        db.delete(rec.transcription)
+        rec.transcription.recording_id = None
     db.delete(rec)
     db.commit()
     audit(db, admin, "DELETE_RECORDING", "recording", recording_id, audio_id)

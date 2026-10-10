@@ -9,7 +9,10 @@ def test_migrated_schema_matches_expected():
     indexes={i["name"] for i in inspect(engine).get_indexes("recordings")}
     assert "ix_recordings_sync_status" in indexes
     with engine.connect() as conn:
-        assert conn.execute(text("select version_num from alembic_version")).scalar() == "0006_multilingual_participant_identity"
+        assert conn.execute(text("select version_num from alembic_version")).scalar() == "0007_integrity_and_transcription_versions"
         assert conn.execute(text("select nextval('participant_login_number_seq')")).scalar() >= 1
     user_uniques = {item["name"] for item in inspect(engine).get_unique_constraints("users")}
     assert "uq_users_participant_id" in user_uniques
+    assert {"language_code"} <= {c["name"] for c in inspect(engine).get_columns("participants")}
+    assert {"version"} <= {c["name"] for c in inspect(engine).get_columns("transcriptions")}
+    assert "transcription_history" in names

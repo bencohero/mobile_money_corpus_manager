@@ -164,6 +164,7 @@ def register_participant(
             allocated_number = number_allocator(db)
         login_id = format_login_id(allocated_number, language_code)
         fields["language"] = language_code.lower()
+        fields["language_code"] = language_code
         participant = Participant(participant_code=login_id, workshop_id=workshop.id, **fields)
         db.add(participant)
         db.flush()

@@ -55,7 +55,7 @@ def test_end_to_end_http_postgres_minio_permissions_and_reconcile():
     assert response2.json()["take_number"] == response.json()["take_number"] + 1
     with SessionLocal() as db:
         rec = db.get(Recording, recording_id)
-        assert rec and rec.participant.participant_code == "P0A2_S001"
+        assert rec and rec.participant.participant_code.startswith("MOS_")
         assert rec.sync_status == "READY"
         assert rec.duration_ms and rec.duration_ms > 0
         assert rec.raw_sha256 and len(rec.raw_sha256) == 64
@@ -75,7 +75,7 @@ def test_end_to_end_http_postgres_minio_permissions_and_reconcile():
     assert transcriber.post(f"/transcribe/{recording_id}", data={"reference_transcription": "synthetic test corrected", "normalized_transcription": "synthetic test corrected", "csrf_token": csrf(transcriber)}).status_code == 303
     assert validator.post(f"/verify/{recording_id}", data={"decision": "VERIFIED", "comment": "", "csrf_token": csrf(validator)}).status_code == 303
     export = admin.get("/export/recordings.csv")
-    assert export.status_code == 200 and "audio_id" in export.text and "P0A2_S001" in export.text
+    assert export.status_code == 200 and "audio_id" in export.text and "MOS_" in export.text
     assert admin.post(f"/recordings/{recording_id}/delete", data={"csrf_token": csrf(admin)}).status_code == 303
     with SessionLocal() as db:
         assert db.get(Recording, recording_id) is None

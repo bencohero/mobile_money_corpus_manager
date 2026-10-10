@@ -41,6 +41,9 @@ class Participant(Base):
     workshop_id: Mapped[int] = mapped_column(ForeignKey("workshops.id", ondelete="RESTRICT"), index=True, nullable=False)
     participant_code: Mapped[str] = mapped_column(String(30), unique=True, index=True)
     language: Mapped[str] = mapped_column(String(10), default="mos")
+    # Canonical, FK-backed language code. ``language`` is retained verbatim for
+    # historical exports and backwards compatibility with the original schema.
+    language_code: Mapped[str] = mapped_column(String(10), ForeignKey("languages.code", ondelete="RESTRICT"), nullable=False, default="MOS", server_default="MOS")
     age_group: Mapped[str | None] = mapped_column(String(30), nullable=True)
     gender: Mapped[str | None] = mapped_column(String(30), nullable=True)
     region: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -197,7 +200,7 @@ class RecordingSubmission(Base):
 class Transcription(Base):
     __tablename__ = "transcriptions"
     id: Mapped[int] = mapped_column(primary_key=True)
-    recording_id: Mapped[int] = mapped_column(ForeignKey("recordings.id"), unique=True)
+    recording_id: Mapped[int | None] = mapped_column(ForeignKey("recordings.id", ondelete="SET NULL"), unique=True, nullable=True)
     reference_transcription: Mapped[str] = mapped_column(Text)
     normalized_transcription: Mapped[str | None] = mapped_column(Text, nullable=True)
     transcriber_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -206,10 +209,31 @@ class Transcription(Base):
     verifier_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
     recording = relationship("Recording", back_populates="transcription")
     transcriber = relationship("User", foreign_keys=[transcriber_id])
     verifier = relationship("User", foreign_keys=[verifier_id])
+    history = relationship("TranscriptionHistory", back_populates="transcription", order_by="TranscriptionHistory.id")
+
+
+class TranscriptionHistory(Base):
+    __tablename__ = "transcription_history"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transcription_id: Mapped[int] = mapped_column(ForeignKey("transcriptions.id", ondelete="RESTRICT"), nullable=False, index=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    action: Mapped[str] = mapped_column(String(40), nullable=False, default="EDIT")
+    old_reference_transcription: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_reference_transcription: Mapped[str | None] = mapped_column(Text, nullable=True)
+    old_normalized_transcription: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_normalized_transcription: Mapped[str | None] = mapped_column(Text, nullable=True)
+    old_verification_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    new_verification_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    previous_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    new_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    transcription = relationship("Transcription", back_populates="history")
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
