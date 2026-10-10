@@ -4,8 +4,8 @@
   <div class="section-head"><div><h2>Nouveau participant</h2><p class="muted">Les champs marqués d’un astérisque sont obligatoires.</p></div></div>
   <form method="post">
     <fieldset><legend>Identité du corpus</legend><div class="form-grid">
-      <div class="field"><label for="participant_code">Identifiant stable <span aria-hidden="true">*</span></label><input id="participant_code" name="participant_code" placeholder="MOS_S001" required autocomplete="off"><small>Un code anonyme, jamais un nom civil.</small></div>
-      <div class="field"><label for="language">Langue</label><input id="language" name="language" value="mos"></div>
+      <div class="field"><label>Identifiant stable</label><p class="muted">Attribué automatiquement selon la langue de l’atelier.</p></div>
+      <input type="hidden" id="language" name="language" value="mos">
     </div></fieldset>
     <fieldset><legend>Profil de collecte</legend><div class="form-grid three">
       <div class="field"><label for="age_group">Tranche d’âge</label><input id="age_group" name="age_group" placeholder="25–34"></div>
@@ -13,7 +13,7 @@
       <div class="field"><label for="region">Région</label><input id="region" name="region"></div>
     </div></fieldset>
     <fieldset><legend>Accès et consentement</legend><div class="form-grid">
-      <div class="field"><label for="username">Compte utilisateur <span aria-hidden="true">*</span></label><input id="username" name="username" required autocomplete="off"></div>
+      <div class="field"><label>Compte utilisateur</label><p class="muted">Identique à l’identifiant généré.</p></div>
       <div class="field"><label for="password">Mot de passe initial <span aria-hidden="true">*</span></label><input id="password" name="password" type="password" required autocomplete="new-password"></div>
     </div><label class="consent-box"><input type="checkbox" name="consent_obtained" value="true"><span><strong>Consentement obtenu</strong><small>Confirmez uniquement après vérification du formulaire de consentement.</small></span></label></fieldset>
     <div class="field"><label for="workshop_id">Atelier</label><select id="workshop_id" name="workshop_id" required>{% for w in workshops %}<option value="{{w.id}}">{{w.name}}</option>{% endfor %}</select></div><div class="form-actions"><button>Créer le participant</button></div>

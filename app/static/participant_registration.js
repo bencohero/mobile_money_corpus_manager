@@ -5,11 +5,57 @@
   const error = document.getElementById("registration-error");
   const password = document.getElementById("new-password");
   const confirmation = document.getElementById("password-confirmation");
+  const workshopCode = document.getElementById("workshop-code");
+  const language = document.getElementById("language");
+  const languageHelp = document.getElementById("workshop-language-help");
   let submitting = false;
+  let workshopLanguageValid = false;
+  let lookupTimer = null;
+  let lookupSequence = 0;
+  let idempotencyKey = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+
+  const lookupWorkshopLanguage = async () => {
+    const code = workshopCode.value.trim();
+    const sequence = ++lookupSequence;
+    workshopLanguageValid = false;
+    language.value = "";
+    if (!code) {
+      languageHelp.textContent = "Déterminée automatiquement par le code d’atelier.";
+      return;
+    }
+    languageHelp.textContent = "Vérification du code d’atelier…";
+    try {
+      const response = await fetch(`/api/auth/workshop-language?code=${encodeURIComponent(code)}`, {credentials: "same-origin"});
+      const body = await response.json();
+      if (sequence !== lookupSequence) return;
+      if (!response.ok) throw new Error(body.detail || "Impossible de récupérer la langue de l’atelier.");
+      language.value = `${body.language_name} (${body.language_code})`;
+      languageHelp.textContent = "Langue imposée par l’atelier et non modifiable.";
+      workshopLanguageValid = true;
+    } catch (problem) {
+      if (sequence !== lookupSequence) return;
+      languageHelp.textContent = problem.message || "Impossible de récupérer la langue de l’atelier.";
+    }
+  };
+
+  workshopCode.addEventListener("input", () => {
+    clearTimeout(lookupTimer);
+    lookupTimer = setTimeout(lookupWorkshopLanguage, 300);
+  });
+  workshopCode.addEventListener("blur", lookupWorkshopLanguage);
 
   form.addEventListener("submit", async event => {
     event.preventDefault();
     if (submitting || !form.reportValidity()) return;
+    if (!workshopLanguageValid) {
+      await lookupWorkshopLanguage();
+    }
+    if (!workshopLanguageValid) {
+      error.textContent = "Saisissez un code d’atelier valide avant de continuer.";
+      error.hidden = false;
+      workshopCode.focus();
+      return;
+    }
     submitting = true;
     button.disabled = true;
     button.querySelector(".button-label").hidden = true;
@@ -20,12 +66,12 @@
       password: password.value,
       password_confirmation: confirmation.value,
       participant: {
-        language: document.getElementById("language").value,
         age_group: document.getElementById("age-group").value,
         gender: document.getElementById("gender").value,
         region: document.getElementById("region").value,
         consent_obtained: document.getElementById("consent").checked
-      }
+      },
+      idempotency_key: idempotencyKey
     };
     try {
       const response = await fetch("/api/auth/participant-registration", {
@@ -56,6 +102,7 @@
       const success = document.getElementById("registration-success");
       success.hidden = false;
       success.focus();
+      idempotencyKey = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
     } catch (problem) {
       password.value = "";
       confirmation.value = "";

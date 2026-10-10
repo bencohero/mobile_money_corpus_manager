@@ -13,7 +13,7 @@ COPY alembic.ini ./alembic.ini
 COPY scripts ./scripts
 RUN test -f /app/alembic.ini \
     && test -f /app/migrations/env.py \
-    && test -f /app/migrations/versions/0005_workshop_attribution.py
+    && test -f /app/migrations/versions/0006_multilingual_participant_identity.py
 RUN useradd --system --uid 10001 --create-home appuser && chown -R appuser:appuser /app
 USER appuser
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

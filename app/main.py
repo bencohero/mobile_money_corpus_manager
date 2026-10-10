@@ -18,7 +18,8 @@ from .auth import verify_password, hash_password, create_token, get_current_user
 from .storage import ensure_bucket, put_file, get_bytes, delete_file, stat_file, list_files, verify_file
 from .seed import seed
 from .corpus_export import build_export, parse_filters, stream_file
-from .participant_registration import RegistrationError, register_participant, validate_password, workshop_code_hash
+from .participant_registration import RegistrationError, next_participant_number, register_participant, validate_password, workshop_code_hash, format_login_id
+from .languages import LANGUAGE_BY_CODE, LANGUAGES, language_name
 from .rate_limit import login_limiter, registration_limiter
 from .schema_guard import SchemaRevisionError, assert_schema_current
 from .workshops import require_active_participant_workshop, workshop_is_open
@@ -147,6 +148,35 @@ def participant_registration_page(request: Request):
     return response
 
 
+@app.get("/api/auth/workshop-language")
+def public_workshop_language(code: str, db: Session = Depends(get_db)):
+    """Expose only the registration-relevant language for a valid workshop code."""
+    normalized_code = code.strip() if isinstance(code, str) else ""
+    if not normalized_code or len(normalized_code) > 128:
+        raise HTTPException(400, "Code d’atelier invalide.")
+    code_record = db.query(WorkshopCode).filter(
+        WorkshopCode.code_hash == workshop_code_hash(normalized_code)
+    ).one_or_none()
+    now = datetime.utcnow()
+    workshop = code_record.workshop if code_record else None
+    unavailable = (
+        code_record is None or workshop is None
+        or not code_record.is_active or not workshop.is_active
+        or (workshop.starts_at is not None and now < workshop.starts_at)
+        or (workshop.ends_at is not None and now >= workshop.ends_at)
+        or (code_record.starts_at is not None and now < code_record.starts_at)
+        or (code_record.expires_at is not None and now >= code_record.expires_at)
+        or (code_record.max_registrations is not None and code_record.use_count >= code_record.max_registrations)
+        or (workshop.capacity is not None and len(workshop.participants) >= workshop.capacity)
+    )
+    if unavailable:
+        raise HTTPException(400, "Ce code d’atelier est incorrect ou n’accepte plus d’inscriptions.")
+    language_code = (workshop.language_code or "").upper()
+    if language_code not in LANGUAGE_BY_CODE:
+        raise HTTPException(409, "La langue de cet atelier n’est pas encore définie.")
+    return {"language_code": language_code, "language_name": language_name(language_code)}
+
+
 @app.post("/api/auth/participant-registration")
 async def participant_registration_api(request: Request, db: Session = Depends(get_db)):
     check_csrf(request)
@@ -234,7 +264,7 @@ def participants(request: Request, db: Session = Depends(get_db)):
 @app.post("/participants")
 def create_participant(
     request: Request,
-    participant_code: str=Form(...), username: str=Form(...), password: str=Form(...), csrf_token: str=Form(...),
+    participant_code: str=Form(""), username: str=Form(""), password: str=Form(...), csrf_token: str=Form(...),
     language: str=Form("mos"), age_group: str=Form(""), gender: str=Form(""),
     region: str=Form(""), consent_obtained: bool=Form(False), workshop_id: int | None=Form(None),
     db: Session=Depends(get_db)
@@ -243,16 +273,15 @@ def create_participant(
     check_csrf(request, csrf_token)
     workshop = db.get(Workshop, workshop_id) if workshop_id else db.query(Workshop).filter(Workshop.is_active.is_(True)).order_by(Workshop.id).first()
     if not workshop or not workshop_is_open(workshop): raise HTTPException(400,"Atelier invalide ou fermé")
-    if db.query(Participant).filter_by(participant_code=participant_code).first():
-        raise HTTPException(400,"participant_code déjà utilisé")
-    if db.query(User).filter_by(username=username).first():
-        raise HTTPException(400,"username déjà utilisé")
-    p=Participant(workshop_id=workshop.id, participant_code=participant_code,language=language,age_group=age_group or None,
+    if not workshop.language_code or workshop.language_code not in LANGUAGE_BY_CODE:
+        raise HTTPException(400, "La langue de l’atelier doit être attribuée avant de créer un participant")
+    generated_code = format_login_id(next_participant_number(db, workshop.language_code), workshop.language_code)
+    p=Participant(workshop_id=workshop.id, participant_code=generated_code,language=workshop.language_code.lower(),age_group=age_group or None,
                   gender=gender or None,region=region or None,consent_obtained=consent_obtained)
     db.add(p); db.flush()
-    u=User(username=username,password_hash=hash_password(password),role="PARTICIPANT",participant_id=p.id)
+    u=User(username=generated_code,password_hash=hash_password(password),role="PARTICIPANT",participant_id=p.id)
     db.add(u); db.commit()
-    audit(db,admin,"CREATE_PARTICIPANT","participant",p.id,participant_code)
+    audit(db,admin,"CREATE_PARTICIPANT","participant",p.id,generated_code)
     return RedirectResponse("/participants",303)
 
 
@@ -595,16 +624,19 @@ def workshop_codes_page(request: Request, db: Session = Depends(get_db)):
     user = require(request, db, ["ADMIN"])
     items = db.query(WorkshopCode).order_by(WorkshopCode.created_at.desc()).all()
     workshops = db.query(Workshop).order_by(Workshop.name).all()
-    return templates.TemplateResponse("workshop_codes.html", {"request": request, "user": user, "items": items, "workshops": workshops})
+    return templates.TemplateResponse("workshop_codes.html", {"request": request, "user": user, "items": items, "workshops": workshops, "languages": LANGUAGES, "language_name": language_name})
 
 
 @app.post("/admin/workshop-codes", response_class=HTMLResponse)
-def create_workshop_code(request: Request, label: str = Form(...), starts_at: str = Form(""), expires_at: str = Form(""), max_registrations: str = Form(""), workshop_id: str = Form(""), csrf_token: str = Form(...), db: Session = Depends(get_db)):
+def create_workshop_code(request: Request, label: str = Form(...), language_code: str = Form(...), starts_at: str = Form(""), expires_at: str = Form(""), max_registrations: str = Form(""), workshop_id: str = Form(""), csrf_token: str = Form(...), db: Session = Depends(get_db)):
     admin = require(request, db, ["ADMIN"])
     check_csrf(request, csrf_token)
     label = label.strip()
     if not label or len(label) > 120:
         raise HTTPException(400, "Libellé invalide.")
+    language_code = language_code.strip().upper()
+    if language_code not in LANGUAGE_BY_CODE:
+        raise HTTPException(400, "Langue d’atelier invalide.")
     start, expiry = parse_optional_datetime(starts_at), parse_optional_datetime(expires_at)
     if start and expiry and expiry <= start:
         raise HTTPException(400, "La date d'expiration doit suivre la date de début.")
@@ -621,6 +653,12 @@ def create_workshop_code(request: Request, label: str = Form(...), starts_at: st
     workshop = db.get(Workshop, selected_workshop_id) if selected_workshop_id else Workshop(name=label)
     if selected_workshop_id and (not workshop or not workshop.is_active):
         raise HTTPException(400, "Atelier invalide ou fermé")
+    if selected_workshop_id and workshop.language_code and workshop.language_code != language_code:
+        if workshop.participants:
+            raise HTTPException(409, "La langue ne peut plus être modifiée après une inscription.")
+        raise HTTPException(409, "Cet atelier possède déjà une autre langue.")
+    if not selected_workshop_id or workshop.language_code is None:
+        workshop.language_code = language_code
     if not selected_workshop_id:
         db.add(workshop)
         db.flush()
@@ -635,7 +673,7 @@ def create_workshop_code(request: Request, label: str = Form(...), starts_at: st
     items = db.query(WorkshopCode).order_by(WorkshopCode.created_at.desc()).all()
     workshops = db.query(Workshop).order_by(Workshop.name).all()
     return templates.TemplateResponse("workshop_codes.html", {
-        "request": request, "user": admin, "items": items, "workshops": workshops, "revealed_code": plain_code,
+        "request": request, "user": admin, "items": items, "workshops": workshops, "languages": LANGUAGES, "language_name": language_name, "revealed_code": plain_code,
     }, status_code=201)
 
 

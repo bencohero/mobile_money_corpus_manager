@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
-from .models import User, Utterance
+from .models import Language, ParticipantLanguageSequence, User, Utterance
+from .languages import LANGUAGES
 from .auth import hash_password
 from .config import settings
 
@@ -20,6 +21,11 @@ SEED = [
 ]
 
 def seed(db: Session):
+    for language in LANGUAGES:
+        if not db.get(Language, language.code):
+            db.add(Language(code=language.code, name=language.name, is_active=True))
+        if not db.get(ParticipantLanguageSequence, language.code):
+            db.add(ParticipantLanguageSequence(language_code=language.code, last_number=0))
     if not db.query(User).filter_by(username=settings.admin_username).first():
         db.add(User(
             username=settings.admin_username,

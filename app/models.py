@@ -17,6 +17,13 @@ class RecordingStatus(str, enum.Enum):
     VERIFIED = "VERIFIED"
     REJECTED = "REJECTED"
 
+
+class Language(Base):
+    __tablename__ = "languages"
+    code: Mapped[str] = mapped_column(String(10), primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -49,6 +56,8 @@ class Workshop(Base):
     __tablename__ = "workshops"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
+    # Nullable is intentional: historical workshops require explicit admin attribution.
+    language_code: Mapped[str | None] = mapped_column(ForeignKey("languages.code", ondelete="RESTRICT"), nullable=True, index=True, default="MOS")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     starts_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -60,6 +69,7 @@ class Workshop(Base):
     participants = relationship("Participant", back_populates="workshop")
     recordings = relationship("Recording", back_populates="workshop")
     codes = relationship("WorkshopCode", back_populates="workshop")
+    language = relationship("Language")
 
 
 class WorkshopCode(Base):
@@ -83,6 +93,26 @@ class WorkshopCode(Base):
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by = relationship("User", foreign_keys=[created_by_user_id])
     workshop = relationship("Workshop", back_populates="codes")
+
+
+class ParticipantLanguageSequence(Base):
+    __tablename__ = "participant_language_sequences"
+    language_code: Mapped[str] = mapped_column(ForeignKey("languages.code", ondelete="RESTRICT"), primary_key=True)
+    last_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ParticipantRegistrationRequest(Base):
+    """Durable idempotency receipt for participant account creation."""
+    __tablename__ = "participant_registration_requests"
+    __table_args__ = (UniqueConstraint("idempotency_key", name="uq_registration_request_key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id", ondelete="RESTRICT"), unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), unique=True)
+    login_id: Mapped[str] = mapped_column(String(30), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 class Utterance(Base):
     __tablename__ = "utterances"
