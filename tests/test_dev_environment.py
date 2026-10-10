@@ -1,6 +1,9 @@
 import json
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from alembic.script import ScriptDirectory
 
@@ -11,6 +14,8 @@ ENV_EXAMPLE = ROOT / ".env.dev.example"
 
 
 def compose_config():
+    if shutil.which("docker") is None:
+        pytest.skip("Docker CLI absent: Compose validation is run by the host CI job")
     result = subprocess.run(
         ["docker", "compose", "--env-file", str(ENV_EXAMPLE), "-f", str(COMPOSE), "config", "--format", "json"],
         cwd=ROOT,

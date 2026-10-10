@@ -14,7 +14,7 @@ from alembic.operations import Operations
 
 from app.auth import verify_password
 from app.db import Base, SessionLocal
-from app.models import AuditLog, Participant, User, Workshop, WorkshopCode
+from app.models import AuditLog, Participant, ParticipantRegistrationRequest, User, Workshop, WorkshopCode
 from app.participant_registration import (
     RegistrationError,
     format_login_id,
@@ -139,7 +139,7 @@ def test_concurrent_registrations_are_unique_and_complete(monkeypatch, count):
     code = "concurrency-" + uuid.uuid4().hex
     with SessionLocal() as db:
         admin = db.query(User).filter_by(role="ADMIN").first()
-        business_workshop = Workshop(name="Concurrency " + code)
+        business_workshop = Workshop(name="Concurrency " + code, language_code="MOS")
         db.add(business_workshop); db.flush()
         workshop = WorkshopCode(workshop_id=business_workshop.id, label="Concurrency", code_hash=workshop_code_hash(code), max_registrations=count, created_by_user_id=admin.id)
         db.add(workshop); db.commit(); workshop_id = workshop.id; business_workshop_id = business_workshop.id
@@ -160,6 +160,7 @@ def test_concurrent_registrations_are_unique_and_complete(monkeypatch, count):
         participant_ids = [result.participant_id for result in results]
         assert db.query(User).filter(User.id.in_(user_ids), User.participant_id.is_(None)).count() == 0
         db.query(AuditLog).filter(AuditLog.user_id.in_(user_ids)).delete(synchronize_session=False)
+        db.query(ParticipantRegistrationRequest).filter(ParticipantRegistrationRequest.user_id.in_(user_ids)).delete(synchronize_session=False)
         db.query(User).filter(User.id.in_(user_ids)).delete(synchronize_session=False)
         db.query(Participant).filter(Participant.id.in_(participant_ids)).delete(synchronize_session=False)
         db.delete(workshop); db.delete(db.get(Workshop, business_workshop_id)); db.commit()
@@ -172,7 +173,7 @@ def test_last_workshop_place_cannot_be_oversubscribed(monkeypatch):
     code = "last-place-" + uuid.uuid4().hex
     with SessionLocal() as db:
         admin = db.query(User).filter_by(role="ADMIN").first()
-        business_workshop = Workshop(name="Last place " + code)
+        business_workshop = Workshop(name="Last place " + code, language_code="MOS")
         db.add(business_workshop); db.flush()
         workshop = WorkshopCode(workshop_id=business_workshop.id, label="Last place", code_hash=workshop_code_hash(code), max_registrations=1, created_by_user_id=admin.id)
         db.add(workshop); db.commit(); workshop_id = workshop.id; business_workshop_id = business_workshop.id
@@ -192,6 +193,7 @@ def test_last_workshop_place_cannot_be_oversubscribed(monkeypatch):
     with SessionLocal() as db:
         assert db.get(WorkshopCode, workshop_id).use_count == 1
         db.query(AuditLog).filter_by(user_id=result.user_id).delete()
+        db.query(ParticipantRegistrationRequest).filter_by(user_id=result.user_id).delete()
         db.query(User).filter_by(id=result.user_id).delete()
         db.query(Participant).filter_by(id=result.participant_id).delete()
         db.query(WorkshopCode).filter_by(id=workshop_id).delete(); db.delete(db.get(Workshop, business_workshop_id)); db.commit()

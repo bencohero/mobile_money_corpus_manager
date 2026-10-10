@@ -45,7 +45,11 @@ class Settings(BaseSettings):
         if self.ffmpeg_timeout_seconds < 1 or self.ffprobe_timeout_seconds < 1 or self.max_concurrent_conversions < 1:
             raise ValueError("Audio limits and timeouts must be positive")
         if self.app_env == "production":
-            forbidden = {"change_me", "change_this_db_password", "change_this_minio_password"}
+            forbidden = {
+                "change_me", "change_this_db_password", "change_this_minio_password",
+                "change_me_now!", "changemenow!", "minioadmin", "minioadmin123", "admin", "password",
+                "password123", "secret", "changeme", "changeit",
+            }
             if len(self.jwt_secret) < 32 or self.jwt_secret.lower() in forbidden:
                 raise ValueError("JWT_SECRET must be strong and non-example in production")
             if not self.workshop_code_secret or len(self.workshop_code_secret) < 32 or self.workshop_code_secret.lower() in forbidden:

@@ -29,3 +29,20 @@ def test_production_accepts_strong_workshop_code_secret():
 def test_production_rejects_default_minio_credentials():
     with pytest.raises(ValueError, match="non-default MinIO"):
         Settings(_env_file=None, app_env="production", jwt_secret="j"*32, workshop_code_secret="w"*32, database_url="postgresql+psycopg://u:p@db/x", postgres_db="x", postgres_user="different", postgres_password="different", minio_root_user="minioadmin", minio_root_password="minioadmin", admin_password="strong-password", cookie_secure=True)
+
+
+@pytest.mark.parametrize("username,password", [("minioadmin", "strong-password"), ("strong-user", "minioadmin")])
+def test_production_rejects_demo_minio_value_in_either_credential(username, password):
+    with pytest.raises(ValueError, match="non-default MinIO"):
+        Settings(_env_file=None, app_env="production", jwt_secret="j"*32, workshop_code_secret="w"*32,
+                 database_url="postgresql+psycopg://u:p@db/x", postgres_db="x", postgres_user="different",
+                 postgres_password="different", minio_root_user=username, minio_root_password=password,
+                 admin_password="strong-password", cookie_secure=True)
+
+
+def test_production_rejects_default_admin_password():
+    with pytest.raises(ValueError, match="admin password"):
+        Settings(_env_file=None, app_env="production", jwt_secret="j"*32, workshop_code_secret="w"*32,
+                 database_url="postgresql+psycopg://u:p@db/x", postgres_db="x", postgres_user="different",
+                 postgres_password="different", minio_root_user="strong-user", minio_root_password="strong-password",
+                 admin_password="ChangeMeNow!", cookie_secure=True)

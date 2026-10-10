@@ -24,6 +24,7 @@ COPY migrations ./migrations
 COPY alembic.ini .
 COPY scripts ./scripts
 COPY tests ./tests
+COPY Dockerfile docker-compose.dev.yml .env.dev.example .gitignore ./
 RUN useradd --system --uid 10001 --create-home appuser && chown -R appuser:appuser /app
 USER appuser
 CMD ["pytest", "-q"]

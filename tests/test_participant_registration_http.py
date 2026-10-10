@@ -5,7 +5,7 @@ import uuid
 import httpx
 
 from app.db import SessionLocal
-from app.models import AuditLog, Participant, User, WorkshopCode
+from app.models import AuditLog, Participant, ParticipantRegistrationRequest, User, WorkshopCode
 
 
 BASE = "http://app-test:8000"
@@ -35,7 +35,7 @@ def test_public_registration_api_permissions_csrf_and_login():
     assert login(admin, "admin", os.environ["ADMIN_PASSWORD"]).status_code == 303
     label = "HTTP " + uuid.uuid4().hex
     created = admin.post("/admin/workshop-codes", data={
-        "label": label, "max_registrations": "2", "starts_at": "", "expires_at": "",
+        "label": label, "language_code": "MOS", "max_registrations": "2", "starts_at": "", "expires_at": "",
         "workshop_id": "",
         "csrf_token": admin.cookies.get("csrf_token"),
     })
@@ -70,6 +70,7 @@ def test_public_registration_api_permissions_csrf_and_login():
         participant_row = db.get(Participant, user.participant_id)
         workshop = db.query(WorkshopCode).filter_by(label=label).one()
         db.query(AuditLog).filter_by(user_id=user.id).delete()
+        db.query(ParticipantRegistrationRequest).filter_by(user_id=user.id).delete()
         db.delete(user); db.flush()
         db.delete(participant_row); db.delete(workshop); db.commit()
     admin.close(); participant.close(); signed_in.close()

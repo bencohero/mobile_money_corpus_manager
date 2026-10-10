@@ -92,7 +92,7 @@ def upload(client, utterance, take, body=None, mime="audio/wav"):
 
 
 def test_real_minio_unavailable_before_upload_has_controlled_rollback(context):
-    client, (_, _, owner_name, _, _) = context
+    client, (_, _, owner_name, _, _, _) = context
     login(client, owner_name, "owner-password-only"); utterance = utterance_id(client)
     original = storage.client
     storage.client = Minio("minio-test:19999", access_key="test-only", secret_key="test-only", secure=False)
@@ -105,7 +105,7 @@ def test_real_minio_unavailable_before_upload_has_controlled_rollback(context):
 
 
 def test_second_object_failure_compensates_real_raw_object(context, monkeypatch):
-    client, (_, code, owner_name, _, _) = context
+    client, (_, code, owner_name, _, _, _) = context
     login(client, owner_name, "owner-password-only"); utterance = utterance_id(client)
     original, calls = main.put_file, []
     def fail_second(name, *args, **kwargs):
@@ -123,7 +123,7 @@ def test_second_object_failure_compensates_real_raw_object(context, monkeypatch)
 
 
 def test_commit_failure_compensates_both_real_objects_and_session_recovers(context):
-    client, (_, code, owner_name, _, _) = context
+    client, (_, code, owner_name, _, _, _) = context
     login(client, owner_name, "owner-password-only"); utterance = utterance_id(client)
     armed = {"value": True}
     def fail_once(session):
@@ -142,7 +142,7 @@ def test_commit_failure_compensates_both_real_objects_and_session_recovers(conte
 
 
 def test_partial_compensation_leaves_real_orphan_detected_by_reconcile(context, monkeypatch):
-    client, (_, code, owner_name, _, _) = context
+    client, (_, code, owner_name, _, _, _) = context
     login(client, owner_name, "owner-password-only"); utterance = utterance_id(client)
     original_put, original_delete = main.put_file, main.delete_file
     def fail_wav(name, *args, **kwargs):
@@ -163,7 +163,7 @@ def test_partial_compensation_leaves_real_orphan_detected_by_reconcile(context, 
 
 
 def test_partial_delete_is_not_silent_and_retry_succeeds(context, monkeypatch):
-    client, (_, code, owner_name, _, _) = context
+    client, (_, code, owner_name, _, _, _) = context
     login(client, owner_name, "owner-password-only")
     response = upload(client, utterance_id(client), 805); assert response.status_code == 200
     rid = response.json()["recording_id"]; admin = TestClient(main.app, follow_redirects=False); login(admin, "admin", os.environ["ADMIN_PASSWORD"]); original = main.delete_file; calls = []
@@ -191,7 +191,7 @@ def test_reconcile_storage_errors_are_distinct(exc, expected):
 
 @pytest.mark.parametrize("seconds,expected", [(0.249, 422), (0.25, 200), (0.8, 200), (120.0, 200), (120.001, 422)])
 def test_duration_boundaries_cross_upload_route(context, monkeypatch, seconds, expected):
-    client, (_, _, owner_name, _, _) = context
+    client, (_, _, owner_name, _, _, _) = context
     login(client, owner_name, "owner-password-only"); utterance = utterance_id(client)
     def fake_command(args, **kwargs):
         if args[0] == "ffmpeg": shutil.copy(args[5], args[-1]); return SimpleNamespace(stdout="", stderr=b"")
@@ -207,7 +207,7 @@ def test_duration_boundaries_cross_upload_route(context, monkeypatch, seconds, e
 
 @pytest.mark.parametrize("kind", ["ffmpeg_timeout", "ffprobe_timeout", "wav_empty"])
 def test_audio_failures_cross_upload_route_without_ready(context, monkeypatch, kind):
-    client, (_, _, owner_name, _, _) = context
+    client, (_, _, owner_name, _, _, _) = context
     login(client, owner_name, "owner-password-only"); utterance = utterance_id(client)
     def fail_command(args, **kwargs):
         if kind == "ffmpeg_timeout" or (kind == "ffprobe_timeout" and args[0] == "ffprobe"):
@@ -223,7 +223,7 @@ def test_audio_failures_cross_upload_route_without_ready(context, monkeypatch, k
 
 
 def test_real_checksum_and_wav_properties(context):
-    client, (_, _, owner_name, _, _) = context
+    client, (_, _, owner_name, _, _, _) = context
     login(client, owner_name, "owner-password-only")
     response = upload(client, utterance_id(client), 860); assert response.status_code == 200
     with SessionLocal() as db:

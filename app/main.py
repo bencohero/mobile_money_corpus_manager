@@ -15,7 +15,7 @@ from .models import User, Participant, Utterance, Recording, Transcription, Audi
 from .take_sequence import next_take_estimate, TakeLimitReached
 from .recording_submission import reserve as reserve_recording, finish as finish_recording, mark_error as mark_recording_error, result as submission_result
 from .auth import verify_password, hash_password, create_token, get_current_user
-from .storage import ensure_bucket, put_file, get_bytes, delete_file, stat_file, list_files, verify_file
+from .storage import ensure_bucket, check_ready, put_file, get_bytes, delete_file, stat_file, list_files, verify_file
 from .seed import seed
 from .corpus_export import build_export, parse_filters, stream_file
 from .participant_registration import RegistrationError, next_participant_number, register_participant, validate_password, workshop_code_hash, format_login_id
@@ -108,13 +108,21 @@ def set_csrf_cookie(response: Response, token: str):
                         secure=settings.cookie_secure, max_age=settings.access_token_minutes * 60)
 
 @app.get("/health")
-def health(db: Session = Depends(get_db)):
+def health():
+    """Liveness probe: the process is serving requests."""
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+def readiness(db: Session = Depends(get_db)):
+    """Readiness probe: all mandatory persistence dependencies are reachable."""
     try:
         db.execute(__import__("sqlalchemy").text("SELECT 1"))
-        stat_file(settings.minio_bucket + "/.healthcheck") if False else None
-        return {"status": "ok"}
+        if not check_ready():
+            raise RuntimeError("MinIO bucket is not ready")
+        return {"status": "ready"}
     except Exception:
-        logger.exception("Health check failed")
+        logger.exception("Readiness check failed")
         raise HTTPException(503, "Service indisponible")
 
 @app.get("/login", response_class=HTMLResponse)
@@ -574,6 +582,8 @@ def verify(
 ):
     user=require(request,db,["ADMIN","VALIDATOR"])
     check_csrf(request, csrf_token)
+    if decision not in {"VERIFIED", "NEEDS_REVIEW", "REJECTED"}:
+        raise HTTPException(400, "Décision de vérification invalide")
     rec=db.get(Recording,recording_id)
     if not rec or not rec.transcription: raise HTTPException(404)
     if rec.sync_status != "READY": raise HTTPException(409, "Audio non finalisé")
