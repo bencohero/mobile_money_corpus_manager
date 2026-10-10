@@ -1,0 +1,46 @@
+# Lot F: isolated preproduction overlay.
+# Use together with docker-compose.test.yml; all stateful resources are renamed.
+name: mobile-money-corpus-f-lot
+
+services:
+  db-test:
+    networks: !reset [f-lot-test]
+    volumes:
+      - f-lot-test-pgdata:/var/lib/postgresql/data
+  minio-test:
+    networks: !reset [f-lot-test]
+    volumes:
+      - f-lot-test-miniodata:/data
+  db-restore:
+    networks: !reset [f-lot-test]
+    volumes:
+      - f-lot-test-restore-pgdata:/var/lib/postgresql/data
+  minio-restore:
+    networks: !reset [f-lot-test]
+    volumes:
+      - f-lot-test-restore-miniodata:/data
+  app-test:
+    networks: !reset [f-lot-test]
+  test:
+    networks: !reset [f-lot-test]
+  tools:
+    networks: !reset [f-lot-test]
+    volumes:
+      - f-lot-test-backup:/backup
+
+networks:
+  f-lot-test:
+    name: mobile-money-corpus-f-lot
+    driver: bridge
+
+volumes:
+  f-lot-test-pgdata:
+    name: mobile-money-corpus-f-lot-pgdata
+  f-lot-test-miniodata:
+    name: mobile-money-corpus-f-lot-miniodata
+  f-lot-test-restore-pgdata:
+    name: mobile-money-corpus-f-lot-restore-pgdata
+  f-lot-test-restore-miniodata:
+    name: mobile-money-corpus-f-lot-restore-miniodata
+  f-lot-test-backup:
+    name: mobile-money-corpus-f-lot-backup

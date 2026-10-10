@@ -32,3 +32,21 @@
 - [ ] Validation des écarts de données et des objets MinIO orphelins.
 - [ ] Approbation de la fenêtre d’indisponibilité et du plan de retour arrière.
 - [ ] Autorisation explicite de déploiement séparée de la réussite de la refactorisation.
+
+## Lot F — recette préproduction
+
+- [x] Images runtime et test construites depuis l’arbre candidat.
+- [x] Environnement isolé F préparé avec réseau et volumes dédiés ; aucun service de production arrêté.
+- [x] Suite Docker complète : 158 passed, 1 skipped, 141,17 s.
+- [x] Alembic vérifié sur la copie : `0008_rate_limit_buckets (head)`.
+- [x] Backup/restore synthétique PostgreSQL + MinIO et SHA-256 vérifiés.
+- [x] Réconciliation post-restore sans anomalie.
+- [x] Comptages source/restauré comparés.
+- [ ] Backup et migration sur données historiques réelles autorisés et exécutés.
+- [ ] HTTPS/certificats/Traefik, Android et tests multi-workers validés sur VPS.
+- [ ] Scanners Bandit, pip-audit et Gitleaks rejoués dans un environnement outillé.
+- [ ] Revue humaine des écarts, fenêtre et retour arrière signée.
+
+**Statut Lot F : BLOQUÉ — PRÊT POUR AUTORISATION après levée des contrôles manquants.**
+
+Voir [PREPRODUCTION_VALIDATION_REPORT.md](PREPRODUCTION_VALIDATION_REPORT.md).
