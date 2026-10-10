@@ -50,3 +50,19 @@
 **Statut Lot F : BLOQUÉ — PRÊT POUR AUTORISATION après levée des contrôles manquants.**
 
 Voir [PREPRODUCTION_VALIDATION_REPORT.md](PREPRODUCTION_VALIDATION_REPORT.md).
+
+## Lot F.1 — décision Go/No-Go
+
+- [x] SHA candidat vérifié : `cb87475513721fc5816272ee41beaff3b9b13f8a`.
+- [x] Images runtime/test/outils étiquetées avec le SHA candidat.
+- [x] Suite candidate : 158 passed, 1 skipped, 121,70 s.
+- [x] Bandit, pip-audit et Gitleaks exécutés dans Docker ; rapports archivés.
+- [x] pip-audit sans vulnérabilité connue ; Gitleaks sans leak.
+- [ ] Réserve Bandit LOW acceptée par la sécurité.
+- [ ] Recette VPS HTTPS/DNS/Traefik/proxy/rate limit réalisée avec autorisation.
+- [ ] Recette navigateur desktop et Android signée.
+- [ ] Migration/restauration historique réelle autorisée, mesurée et réconciliée.
+- [ ] Signatures données, exploitation, sécurité et produit recueillies.
+
+**Décision F.1 : NO-GO.** Voir [PREPRODUCTION_F1_REPORT.md](PREPRODUCTION_F1_REPORT.md)
+et [GO_NO_GO_CHECKLIST.md](GO_NO_GO_CHECKLIST.md).
