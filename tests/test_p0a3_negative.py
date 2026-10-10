@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from app import main
 from app.db import SessionLocal
-from app.models import Recording
+from app.models import Recording, User
 from app.storage import get_bytes, put_file, delete_file, stat_file
 
 BASE = "http://app-test:8000"
@@ -37,7 +37,9 @@ def wav(seconds):
 
 def remaining_recording():
     with SessionLocal() as db:
-        r=db.query(Recording).order_by(Recording.id.desc()).first()
+        owner_id = db.query(User.participant_id).filter(User.username == "p0a2-participant").scalar()
+        r=db.query(Recording).filter(Recording.participant_id == owner_id).order_by(Recording.id.desc()).first()
+        assert r is not None, "the HTTP integration fixture must create an owner recording first"
         return r.id, r.participant_id, r.raw_object, r.wav_object
 
 def test_http_permission_matrix_idor_sessions_and_csrf():

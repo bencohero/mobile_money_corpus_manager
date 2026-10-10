@@ -10,14 +10,14 @@ import uuid
 import wave
 import zipfile
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from . import storage
-from .models import Recording, Workshop
+from .models import Recording, Transcription, Workshop
 
 logger = logging.getLogger("mobile_money_corpus_manager.export")
 EXPORT_SCHEMA = "1.0"
@@ -167,32 +167,40 @@ def _read_validate_object(rec, path):
 
 
 def _query(db, filters):
-    query = db.query(Recording).filter(Recording.sync_status == "READY").order_by(Recording.id)
+    query = db.query(Recording)
+    if hasattr(query, "options"):
+        query = query.options(
+            joinedload(Recording.participant), joinedload(Recording.utterance),
+            joinedload(Recording.workshop), joinedload(Recording.transcription),
+        )
+    query = query.filter(Recording.sync_status == "READY").order_by(Recording.id)
     if filters["status"]: query = query.filter(Recording.status == filters["status"])
     if filters["condition"]: query = query.filter(Recording.condition == filters["condition"])
     if filters.get("workshop_id"): query = query.filter(Recording.workshop_id == filters["workshop_id"])
     if filters["participant"]: query = query.join(Recording.participant).filter_by(participant_code=filters["participant"])
     if filters["intent"]: query = query.join(Recording.utterance).filter_by(intent=filters["intent"])
-    records = query.all()
-    start = datetime.fromisoformat(filters["date_min"]).date() if filters["date_min"] else None
-    end = datetime.fromisoformat(filters["date_max"]).date() if filters["date_max"] else None
-    result = []
-    for rec in records:
-        tr = rec.transcription
-        if filters["verification_status"] and (not tr or tr.verification_status != filters["verification_status"]): continue
-        if filters["has_transcription"] is True and not tr: continue
-        if filters["has_transcription"] is False and tr: continue
-        created = rec.created_at.date() if rec.created_at else None
-        if start and (not created or created < start): continue
-        if end and (not created or created > end): continue
-        result.append(rec)
-    return result
+    if filters["verification_status"]:
+        query = query.filter(Recording.transcription.has(Transcription.verification_status == filters["verification_status"]))
+    if filters["has_transcription"] is True:
+        query = query.filter(Recording.transcription.has())
+    elif filters["has_transcription"] is False:
+        query = query.filter(~Recording.transcription.has())
+    if filters["date_min"]:
+        query = query.filter(Recording.created_at >= datetime.combine(date.fromisoformat(filters["date_min"]), datetime_time.min))
+    if filters["date_max"]:
+        query = query.filter(Recording.created_at < datetime.combine(date.fromisoformat(filters["date_max"]) + timedelta(days=1), datetime_time.min))
+    return query
 
 
 def build_export(db: Session, filters):
     records = _query(db, filters)
-    if len(records) > MAX_EXPORT_RECORDINGS:
-        raise HTTPException(413, f"export limité à {MAX_EXPORT_RECORDINGS} enregistrements")
+    records = records.yield_per(100) if hasattr(records, "yield_per") else iter(records.all())
+    bounded_records = []
+    for rec in records:
+        bounded_records.append(rec)
+        if len(bounded_records) > MAX_EXPORT_RECORDINGS:
+            raise HTTPException(413, f"export limité à {MAX_EXPORT_RECORDINGS} enregistrements")
+    records = bounded_records
     excluded = Counter()
     included = []
     used = set()

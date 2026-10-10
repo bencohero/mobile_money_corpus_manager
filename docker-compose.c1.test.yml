@@ -1,0 +1,37 @@
+# C.1 isolated validation overlay. It deliberately uses dedicated volume,
+# network, database and MinIO names; it never reuses the regular test data.
+services:
+  db-test:
+    volumes:
+      - c1-test-pgdata:/var/lib/postgresql/data
+  minio-test:
+    volumes:
+      - c1-test-miniodata:/data
+  db-restore:
+    volumes:
+      - c1-restore-pgdata:/var/lib/postgresql/data
+  minio-restore:
+    volumes:
+      - c1-restore-miniodata:/data
+  app-test:
+    environment:
+      DATABASE_URL: postgresql+psycopg://p0a2_user:p0a2_password_only@db-test:5432/p0a2_test
+      MINIO_ENDPOINT: minio-test:9000
+      MINIO_BUCKET: c1-test-bucket
+  test:
+    environment:
+      DATABASE_URL: postgresql+psycopg://p0a2_user:p0a2_password_only@db-test:5432/p0a2_test
+      MINIO_ENDPOINT: minio-test:9000
+      MINIO_BUCKET: c1-test-bucket
+  tools:
+    volumes:
+      - c1-test-backup:/backup
+networks:
+  p0a2-test:
+    name: mobile-money-corpus-c1-test
+volumes:
+  c1-test-pgdata:
+  c1-test-miniodata:
+  c1-restore-pgdata:
+  c1-restore-miniodata:
+  c1-test-backup:

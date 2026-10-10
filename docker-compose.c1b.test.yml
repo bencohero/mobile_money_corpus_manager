@@ -1,0 +1,30 @@
+services:
+  db-test:
+    volumes: [c1b-test-pgdata:/var/lib/postgresql/data]
+  minio-test:
+    volumes: [c1b-test-miniodata:/data]
+  db-restore:
+    volumes: [c1b-restore-pgdata:/var/lib/postgresql/data]
+  minio-restore:
+    volumes: [c1b-restore-miniodata:/data]
+  app-test:
+    environment:
+      DATABASE_URL: postgresql+psycopg://p0a2_user:p0a2_password_only@db-test:5432/p0a2_test
+      MINIO_ENDPOINT: minio-test:9000
+      MINIO_BUCKET: c1b-test-bucket
+  test:
+    environment:
+      DATABASE_URL: postgresql+psycopg://p0a2_user:p0a2_password_only@db-test:5432/p0a2_test
+      MINIO_ENDPOINT: minio-test:9000
+      MINIO_BUCKET: c1b-test-bucket
+  tools:
+    volumes: [c1b-test-backup:/backup]
+networks:
+  p0a2-test:
+    name: mobile-money-corpus-c1b-test
+volumes:
+  c1b-test-pgdata:
+  c1b-test-miniodata:
+  c1b-restore-pgdata:
+  c1b-restore-miniodata:
+  c1b-test-backup:

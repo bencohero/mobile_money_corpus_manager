@@ -1,0 +1,23 @@
+# Remediation-D isolated overlay. Names are unique so it cannot attach to
+# existing P0-A/C test networks or volumes.
+services:
+  db-test:
+    volumes: [d-test-pgdata:/var/lib/postgresql/data]
+  minio-test:
+    volumes: [d-test-miniodata:/data]
+  app-test:
+    environment:
+      DATABASE_URL: postgresql+psycopg://p0a2_user:p0a2_password_only@db-test:5432/p0a2_test
+      MINIO_ENDPOINT: minio-test:9000
+      MINIO_BUCKET: d-test-bucket
+  test:
+    environment:
+      DATABASE_URL: postgresql+psycopg://p0a2_user:p0a2_password_only@db-test:5432/p0a2_test
+      MINIO_ENDPOINT: minio-test:9000
+      MINIO_BUCKET: d-test-bucket
+networks:
+  p0a2-test:
+    name: mobile-money-corpus-d-test
+volumes:
+  d-test-pgdata:
+  d-test-miniodata:

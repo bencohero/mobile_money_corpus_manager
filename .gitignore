@@ -6,5 +6,7 @@ BILAN*.md
 AUDIT_*.md
 prompt_*.md
 RAPPORT_*.md
-scripts/
+scripts/*
+!scripts/security_checks.sh
+!scripts/check_workshop_references.py
 backups/

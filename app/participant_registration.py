@@ -14,6 +14,7 @@ from .auth import hash_password
 from .config import settings
 from .models import AuditLog, Participant, ParticipantLanguageSequence, ParticipantRegistrationRequest, Role, User, Workshop, WorkshopCode
 from .languages import LANGUAGE_BY_CODE
+from .time_utils import utc_now
 
 
 LOGIN_RE = re.compile(r"^[A-Z][A-Z0-9]{1,9}_[0-9]{3,}$")
@@ -124,7 +125,7 @@ def register_participant(
     code, password, fields = validate_payload(payload)
     request_key = fields.pop("idempotency_key") or uuid.uuid4().hex
     fingerprint = hashlib.sha256(json.dumps({"workshop_code": code, "password": password, "participant": fields}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    current_time = now or datetime.utcnow()
+    current_time = now or utc_now()
     try:
         existing_request = db.query(ParticipantRegistrationRequest).filter_by(idempotency_key=request_key).one_or_none()
         if existing_request:

@@ -3,10 +3,11 @@ from datetime import datetime
 from fastapi import HTTPException
 
 from .models import Participant, Role, User, Workshop
+from .time_utils import as_utc_naive, utc_now
 
 
 def workshop_is_open(workshop: Workshop, now: datetime | None = None) -> bool:
-    now = now or datetime.utcnow()
+    now = as_utc_naive(now) if now else utc_now()
     return (
         workshop.is_active
         and (workshop.starts_at is None or now >= workshop.starts_at)

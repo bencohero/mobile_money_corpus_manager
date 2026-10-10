@@ -2,6 +2,7 @@ import csv, io, logging, secrets, subprocess, tempfile, time, hashlib, uuid, wav
 from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, HTTPException
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -15,12 +16,13 @@ from .models import User, Participant, Utterance, Recording, Transcription, Tran
 from .take_sequence import next_take_estimate, TakeLimitReached
 from .recording_submission import reserve as reserve_recording, finish as finish_recording, mark_error as mark_recording_error, result as submission_result
 from .auth import verify_password, hash_password, create_token, get_current_user
-from .storage import ensure_bucket, check_ready, put_file, get_bytes, delete_file, stat_file, list_files, verify_file
+from .storage import ensure_bucket, check_ready, put_file, get_bytes, delete_file, stat_file, list_files, verify_file, stream_file as stream_storage_file
 from .seed import seed
 from .corpus_export import build_export, parse_filters, stream_file
 from .participant_registration import RegistrationError, next_participant_number, register_participant, validate_password, workshop_code_hash, format_login_id
 from .languages import LANGUAGE_BY_CODE, LANGUAGES, language_name
-from .rate_limit import login_limiter, registration_limiter
+from .rate_limit import login_limiter, registration_limiter, workshop_language_limiter
+from .time_utils import as_utc_naive, utc_now
 from .schema_guard import SchemaRevisionError, assert_schema_current
 from .workshops import require_active_participant_workshop, workshop_is_open
 
@@ -28,6 +30,8 @@ logger = logging.getLogger("mobile_money_corpus_manager")
 ALLOWED_AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/mpeg"}
 ALLOWED_CONDITIONS = {"CLEAN", "NOISY"}
 CONVERSION_SLOTS = __import__("threading").BoundedSemaphore(settings.max_concurrent_conversions)
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 100
 class ConversionSaturated(Exception): pass
 def run_audio_command(args, **kwargs):
     if not CONVERSION_SLOTS.acquire(blocking=False):
@@ -54,6 +58,37 @@ def compensate_uploaded(uploaded, request):
 
 
 app = FastAPI(title="Mobile Money Corpus Manager")
+
+
+class SecurityHeadersMiddleware:
+    async def __call__(self, scope, receive, send):
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                security = {
+                    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+                    "x-content-type-options": "nosniff",
+                    "referrer-policy": "strict-origin-when-cross-origin",
+                    "permissions-policy": "microphone=(self)",
+                    "x-frame-options": "DENY",
+                }
+                if settings.cookie_secure:
+                    security["strict-transport-security"] = "max-age=31536000; includeSubDomains"
+                existing = {key.decode().lower() for key, _ in headers}
+                headers.extend((key.encode(), value.encode()) for key, value in security.items() if key not in existing)
+                message = {**message, "headers": headers}
+            await send(message)
+        await self.app(scope, receive, send_with_headers)
+
+    def __init__(self, app):
+        self.app = app
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+_trusted_hosts = [host.strip() for host in settings.trusted_hosts.split(",") if host.strip()]
+if settings.app_env == "production" and _trusted_hosts == ["*"]:
+    _trusted_hosts = [settings.app_host]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts or [settings.app_host])
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
@@ -135,13 +170,14 @@ def login_page(request: Request):
 @app.post("/login")
 def login(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...), db: Session = Depends(get_db)):
     check_csrf(request, csrf_token)
-    login_limiter.check(request, f"login:{username.casefold()}", record=False)
+    login_scope = f"login:{username.casefold()}"
+    login_limiter.check(request, login_scope, db=db, record=False)
     user = db.query(User).filter_by(username=username).first()
     if not user:
         participant = db.query(Participant).filter_by(participant_code=username).one_or_none()
         user = participant.user if participant else None
     if not user or not user.is_active or not verify_password(password, user.password_hash):
-        login_limiter.record(request, f"login:{username.casefold()}")
+        login_limiter.record(request, login_scope, db=db)
         return templates.TemplateResponse("login.html", {"request":request,"error":"Identifiants incorrects", "csrf_token":csrf_token}, status_code=401)
     token = create_token(user)
     resp = RedirectResponse("/", status_code=303)
@@ -160,15 +196,16 @@ def participant_registration_page(request: Request):
 
 
 @app.get("/api/auth/workshop-language")
-def public_workshop_language(code: str, db: Session = Depends(get_db)):
+def public_workshop_language(request: Request, code: str, db: Session = Depends(get_db)):
     """Expose only the registration-relevant language for a valid workshop code."""
     normalized_code = code.strip() if isinstance(code, str) else ""
+    workshop_language_limiter.check(request, "workshop-language", db=db)
     if not normalized_code or len(normalized_code) > 128:
-        raise HTTPException(400, "Code d’atelier invalide.")
+        raise HTTPException(400, "Code d’atelier incorrect ou indisponible.")
     code_record = db.query(WorkshopCode).filter(
         WorkshopCode.code_hash == workshop_code_hash(normalized_code)
     ).one_or_none()
-    now = datetime.utcnow()
+    now = utc_now()
     workshop = code_record.workshop if code_record else None
     unavailable = (
         code_record is None or workshop is None
@@ -181,24 +218,35 @@ def public_workshop_language(code: str, db: Session = Depends(get_db)):
         or (workshop.capacity is not None and len(workshop.participants) >= workshop.capacity)
     )
     if unavailable:
-        raise HTTPException(400, "Ce code d’atelier est incorrect ou n’accepte plus d’inscriptions.")
+        raise HTTPException(400, "Code d’atelier incorrect ou indisponible.")
     language_code = (workshop.language_code or "").upper()
     if language_code not in LANGUAGE_BY_CODE:
-        raise HTTPException(409, "La langue de cet atelier n’est pas encore définie.")
+        raise HTTPException(400, "Code d’atelier incorrect ou indisponible.")
     return {"language_code": language_code, "language_name": language_name(language_code)}
 
 
 @app.post("/api/auth/participant-registration")
 async def participant_registration_api(request: Request, db: Session = Depends(get_db)):
     check_csrf(request)
-    registration_limiter.check(request, "participant-registration")
+    registration_limiter.check(request, "participant-registration", db=db)
     try:
         if int(request.headers.get("content-length", "0")) > 8192:
             raise HTTPException(413, "Requête d'inscription trop volumineuse.")
     except ValueError:
         raise HTTPException(400, "Requête d'inscription invalide.")
     try:
-        payload = await request.json()
+        content_length = request.headers.get("content-length")
+        if content_length is not None and int(content_length) > 8192:
+            raise HTTPException(413, "Requête d'inscription trop volumineuse.")
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 8192:
+                raise HTTPException(413, "Requête d'inscription trop volumineuse.")
+        import json
+        payload = json.loads(bytes(body))
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(400, "Requête d'inscription invalide.")
     try:
@@ -482,17 +530,30 @@ def upload_recording(
 def recordings_page(request: Request, db: Session=Depends(get_db)):
     user=require(request,db,["ADMIN","PARTICIPANT","TRANSCRIBER","VALIDATOR"])
     q=db.query(Recording).filter(Recording.sync_status == "READY")
+    try:
+        page = max(1, int(request.query_params.get("page", "1")))
+        page_size = min(MAX_PAGE_SIZE, max(1, int(request.query_params.get("page_size", str(DEFAULT_PAGE_SIZE)))))
+    except ValueError:
+        raise HTTPException(400, "Pagination invalide")
     if user.role == "TRANSCRIBER":
-        items = q.options(
-            joinedload(Recording.participant), joinedload(Recording.utterance),
-            joinedload(Recording.transcription)
-        ).order_by(Recording.created_at.desc()).all()
-        pending = [r for r in items if r.transcription is None]
-        transcribed = [r for r in items if r.transcription is not None]
         active_filter = request.query_params.get("filter", "todo")
         if active_filter not in {"todo", "transcribed", "all"}:
             active_filter = "todo"
-        visible = {"todo": pending, "transcribed": transcribed, "all": items}[active_filter]
+        if active_filter == "todo":
+            q = q.filter(~db.query(Transcription.id).filter(Transcription.recording_id == Recording.id).exists())
+        elif active_filter == "transcribed":
+            q = q.filter(db.query(Transcription.id).filter(Transcription.recording_id == Recording.id).exists())
+        counts = {
+            "todo": db.query(Recording).filter(Recording.sync_status == "READY").filter(~db.query(Transcription.id).filter(Transcription.recording_id == Recording.id).exists()).count(),
+            "transcribed": db.query(Recording).filter(Recording.sync_status == "READY").filter(db.query(Transcription.id).filter(Transcription.recording_id == Recording.id).exists()).count(),
+            "all": db.query(Recording).filter(Recording.sync_status == "READY").count(),
+        }
+        total = counts[active_filter]
+        items = q.options(
+            joinedload(Recording.participant), joinedload(Recording.utterance),
+            joinedload(Recording.transcription)
+        ).order_by(Recording.created_at.desc(), Recording.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        visible = items
         selected_raw = request.query_params.get("selected")
         selected_id = int(selected_raw) if selected_raw and selected_raw.isdigit() else None
         selected = next((r for r in visible if r.id == selected_id), visible[0] if visible else None)
@@ -508,12 +569,12 @@ def recordings_page(request: Request, db: Session=Depends(get_db)):
             "normalized_transcription": r.transcription.normalized_transcription if r.transcription else "",
             "version": r.transcription.version if r.transcription else 0,
             "can_edit": r.status != "VERIFIED",
-        } for r in items]
+        } for r in visible]
         return templates.TemplateResponse("transcriber_workspace.html", {
             "request": request, "user": user, "items": items, "visible": visible,
             "selected": selected, "payload": payload, "counts": {
-                "todo": len(pending), "transcribed": len(transcribed), "all": len(items)
             }, "active_filter": active_filter, "saved": request.query_params.get("saved") == "1",
+            "page": page, "page_size": page_size, "total": total,
         })
     if user.role=="PARTICIPANT":
         q=q.filter(Recording.participant_id==user.participant_id)
@@ -521,10 +582,11 @@ def recordings_page(request: Request, db: Session=Depends(get_db)):
     if user.role=="ADMIN" and workshop_id:
         try: q=q.filter(Recording.workshop_id == int(workshop_id))
         except ValueError: raise HTTPException(400,"Atelier invalide")
-    items=q.order_by(Recording.created_at.desc()).all()
+    total = q.count()
+    items=q.options(joinedload(Recording.participant), joinedload(Recording.utterance)).order_by(Recording.created_at.desc(), Recording.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     workshops=db.query(Workshop).order_by(Workshop.name).all() if user.role=="ADMIN" else []
     template = "participant_recordings.html" if user.role == "PARTICIPANT" else "recordings.html"
-    return templates.TemplateResponse(template,{"request":request,"user":user,"items":items,"workshops":workshops,"selected_workshop_id":workshop_id})
+    return templates.TemplateResponse(template,{"request":request,"user":user,"items":items,"workshops":workshops,"selected_workshop_id":workshop_id,"page":page,"page_size":page_size,"total":total})
 
 @app.get("/audio/{recording_id}")
 def audio(recording_id:int, request:Request, db:Session=Depends(get_db)):
@@ -534,7 +596,36 @@ def audio(recording_id:int, request:Request, db:Session=Depends(get_db)):
     if rec.sync_status != "READY": raise HTTPException(409, "Audio non finalisé")
     if user.role=="PARTICIPANT" and rec.participant_id!=user.participant_id:
         raise HTTPException(403)
-    return Response(get_bytes(rec.wav_object),media_type="audio/wav")
+    try:
+        info = stat_file(rec.wav_object)
+    except Exception:
+        raise HTTPException(502, "Audio temporairement indisponible")
+    size = int(info.size)
+    content_type = getattr(info, "content_type", None) or "audio/wav"
+    headers = {"Accept-Ranges": "bytes", "Content-Length": str(size)}
+    range_header = request.headers.get("range")
+    if not range_header:
+        return StreamingResponse(stream_storage_file(rec.wav_object), media_type=content_type, headers=headers)
+    if not range_header.startswith("bytes=") or "," in range_header:
+        return Response(status_code=416, headers={"Accept-Ranges": "bytes", "Content-Range": f"bytes */{size}"})
+    value = range_header[6:].strip()
+    try:
+        start_text, end_text = value.split("-", 1)
+        if not start_text:
+            suffix = int(end_text)
+            if suffix <= 0: raise ValueError
+            start, end = max(0, size - suffix), size - 1
+        else:
+            start = int(start_text)
+            end = int(end_text) if end_text else size - 1
+            end = min(end, size - 1)
+        if start < 0 or start >= size or end < start:
+            raise ValueError
+    except ValueError:
+        return Response(status_code=416, headers={"Accept-Ranges": "bytes", "Content-Range": f"bytes */{size}"})
+    length = end - start + 1
+    headers.update({"Content-Length": str(length), "Content-Range": f"bytes {start}-{end}/{size}"})
+    return StreamingResponse(stream_storage_file(rec.wav_object, offset=start, length=length), status_code=206, media_type=content_type, headers=headers)
 
 @app.get("/transcribe/{recording_id}", response_class=HTMLResponse)
 def transcribe_page(recording_id:int, request:Request, db:Session=Depends(get_db)):
@@ -574,7 +665,7 @@ def save_transcription(
         ).values(reference_transcription=reference_transcription,
                  normalized_transcription=normalized_transcription or None,
                  transcriber_id=user.id, verification_status="PENDING",
-                 version=new_version, updated_at=datetime.utcnow()))
+                 version=new_version, updated_at=utc_now()))
         if result.rowcount != 1:
             db.rollback()
             current_tr = db.get(Transcription, tr.id)
@@ -672,7 +763,7 @@ def verify(
         Transcription.id == tr.id, Transcription.version == expected_version
     ).values(verifier_id=user.id, verifier_comment=comment or None,
              verification_status=new_status, version=expected_version + 1,
-             updated_at=datetime.utcnow()))
+             updated_at=utc_now()))
     if not hasattr(result, "rowcount"):
         tr.verifier_id = user.id
         tr.verifier_comment = comment or None
@@ -716,7 +807,7 @@ def parse_optional_datetime(value: str) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        return as_utc_naive(datetime.fromisoformat(value))
     except ValueError as exc:
         raise HTTPException(400, "Date d'atelier invalide.") from exc
 
@@ -787,7 +878,7 @@ def set_workshop_code_status(code_id: int, request: Request, active: bool = Form
     if not item:
         raise HTTPException(404)
     item.is_active = active
-    item.disabled_at = None if active else datetime.utcnow()
+    item.disabled_at = None if active else utc_now()
     db.commit()
     audit(db, admin, "SET_WORKSHOP_CODE_STATUS", "workshop_code", item.id, f"active={active}")
     return RedirectResponse("/admin/workshop-codes", 303)
@@ -801,9 +892,9 @@ def set_workshop_status(workshop_id: int, request: Request, active: bool = Form(
     if not workshop:
         raise HTTPException(404)
     workshop.is_active = active
-    workshop.disabled_at = None if active else datetime.utcnow()
+    workshop.disabled_at = None if active else utc_now()
     workshop.disabled_by_user_id = None if active else admin.id
-    workshop.updated_at = datetime.utcnow()
+    workshop.updated_at = utc_now()
     db.commit()
     audit(db, admin, "SET_WORKSHOP_STATUS", "workshop", workshop.id, f"active={active}")
     return RedirectResponse("/admin/workshop-codes", 303)
@@ -828,7 +919,7 @@ def delete_recording(recording_id: int, request: Request, csrf_token: str = Form
     receipt = db.query(RecordingSubmission).filter_by(recording_id=rec.id).first()
     if receipt:
         receipt.state = "DELETED"
-        receipt.updated_at = datetime.utcnow()
+        receipt.updated_at = utc_now()
     # Keep the transcription and its history as a tombstone. The recording FK
     # is nullable after migration 0007, so deleting audio never deletes the
     # historical transcript or its audit trail.

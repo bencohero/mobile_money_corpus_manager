@@ -5,6 +5,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_env: str = "development"
+    app_host: str = "localhost"
+    trusted_hosts: str = "*"
     database_url: str | None = None
     postgres_db: str | None = None
     postgres_user: str | None = None

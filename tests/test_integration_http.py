@@ -28,7 +28,7 @@ def csrf(client):
     return client.cookies.get("csrf_token")
 def create_participant(admin, code, username, password):
     # The isolated stack is persistent; permit repeated runs without deleting fixtures.
-    if code in admin.get("/participants").text: return
+    if code in admin.get("/participants").text or username in admin.get("/users").text: return
     response = admin.post("/participants", data={"participant_code": code, "username": username, "password": password, "language": "mos", "consent_obtained": "on", "csrf_token": csrf(admin)})
     assert response.status_code == 303
 def create_user(admin, username, password, role):

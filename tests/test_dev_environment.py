@@ -73,7 +73,7 @@ def test_alembic_head_and_runtime_files_exist():
     assert (ROOT / "alembic.ini").is_file()
     assert (migrations / "env.py").is_file()
     heads = ScriptDirectory(str(migrations)).get_heads()
-    assert tuple(heads) == ("0007_integrity_and_transcription_versions",)
+    assert tuple(heads) == ("0008_rate_limit_buckets",)
     dockerfile = (ROOT / "Dockerfile").read_text()
     assert "COPY migrations ./migrations" in dockerfile
     assert "COPY alembic.ini ./alembic.ini" in dockerfile

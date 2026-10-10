@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from .models import Recording, RecordingSubmission, AuditLog
 from .take_sequence import allocate_next_take
+from .time_utils import utc_now
 
 
 def result(receipt):
@@ -33,7 +34,7 @@ def detach(db, receipt):
 
 def reserve(db, user_id, participant, utterance, condition, key, fingerprint, suffix):
     operation = uuid.uuid4().hex
-    now = datetime.utcnow()
+    now = utc_now()
     inserted = db.execute(insert(RecordingSubmission).values(
         id=operation, user_id=user_id, participant_id=participant.id, workshop_id=participant.workshop_id,
         idempotency_key=key, fingerprint=fingerprint, state="PENDING",
@@ -65,8 +66,8 @@ def finish(db, receipt_id, metadata):
     receipt = db.get(RecordingSubmission, receipt_id)
     rec = db.get(Recording, receipt.recording_id)
     for name, value in metadata.items(): setattr(rec, name, value)
-    rec.sync_status, rec.sync_error, rec.finalized_at = "READY", None, datetime.utcnow()
-    receipt.state, receipt.updated_at = "READY", datetime.utcnow()
+    rec.sync_status, rec.sync_error, rec.finalized_at = "READY", None, utc_now()
+    receipt.state, receipt.updated_at = "READY", utc_now()
     db.add(AuditLog(user_id=receipt.user_id, action="CREATE_RECORDING", entity_type="recording", entity_id=str(rec.id), detail=rec.audio_id))
     db.commit()
     return detach(db, receipt)
@@ -81,6 +82,6 @@ def mark_error(db, receipt_id, status, detail):
     rec = db.get(Recording, receipt.recording_id)
     rec.sync_status, rec.sync_error = "ERROR", "upload_failed"
     receipt.state, receipt.error_status, receipt.error_detail = "ERROR", status, detail
-    receipt.updated_at = datetime.utcnow()
+    receipt.updated_at = utc_now()
     db.commit()
     return detach(db, receipt)

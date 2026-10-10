@@ -28,7 +28,7 @@ test('transcriber workspace stays scoped and responsive', () => {
 });
 
 test('only transcribers receive the workspace branch and save keeps the workflow', () => {
-  assert.match(main, /if user\.role == "TRANSCRIBER":\s+items = q\.options/);
+  assert.match(main, /if user\.role == "TRANSCRIBER":\s+active_filter = request\.query_params\.get\("filter", "todo"\)/);
   assert.match(main, /RedirectResponse\(f"\/recordings\?filter=todo&selected=\{next_recording\.id\}&saved=1"/);
   assert.match(main, /user=require\(request,db,\["ADMIN","PARTICIPANT","TRANSCRIBER"\]\)/);
 });

@@ -82,3 +82,16 @@ def get_bytes(object_name: str) -> bytes:
     finally:
         resp.close()
         resp.release_conn()
+
+
+def stream_file(object_name: str, offset: int = 0, length: int | None = None,
+                chunk_size: int = 1024 * 1024):
+    """Yield an object in bounded chunks and always release the MinIO response."""
+    response = client.get_object(settings.minio_bucket, object_name,
+                                 offset=offset, length=length)
+    try:
+        while chunk := response.read(chunk_size):
+            yield chunk
+    finally:
+        response.close()
+        response.release_conn()

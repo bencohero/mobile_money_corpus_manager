@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import String, Text, Integer, Boolean, DateTime, ForeignKey, UniqueConstraint, CheckConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
+from .time_utils import utc_now
 
 class Role(str, enum.Enum):
     ADMIN = "ADMIN"
@@ -32,7 +33,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(30), default=Role.PARTICIPANT.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id"), nullable=True, unique=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     participant = relationship("Participant", back_populates="user", uselist=False)
 
 class Participant(Base):
@@ -49,7 +50,7 @@ class Participant(Base):
     region: Mapped[str | None] = mapped_column(String(120), nullable=True)
     consent_obtained: Mapped[bool] = mapped_column(Boolean, default=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     user = relationship("User", back_populates="participant", uselist=False)
     recordings = relationship("Recording", back_populates="participant")
     workshop = relationship("Workshop", back_populates="participants")
@@ -65,8 +66,8 @@ class Workshop(Base):
     starts_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     capacity: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     disabled_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
     participants = relationship("Participant", back_populates="workshop")
@@ -92,7 +93,7 @@ class WorkshopCode(Base):
     max_registrations: Mapped[int | None] = mapped_column(Integer, nullable=True)
     use_count: Mapped[int] = mapped_column(Integer, default=0)
     created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by = relationship("User", foreign_keys=[created_by_user_id])
     workshop = relationship("Workshop", back_populates="codes")
@@ -102,7 +103,7 @@ class ParticipantLanguageSequence(Base):
     __tablename__ = "participant_language_sequences"
     language_code: Mapped[str] = mapped_column(ForeignKey("languages.code", ondelete="RESTRICT"), primary_key=True)
     last_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class ParticipantRegistrationRequest(Base):
@@ -115,7 +116,7 @@ class ParticipantRegistrationRequest(Base):
     participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id", ondelete="RESTRICT"), unique=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), unique=True)
     login_id: Mapped[str] = mapped_column(String(30), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 class Utterance(Base):
     __tablename__ = "utterances"
@@ -159,7 +160,7 @@ class Recording(Base):
     wav_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     participant = relationship("Participant", back_populates="recordings")
     workshop = relationship("Workshop", back_populates="recordings")
@@ -173,8 +174,8 @@ class RecordingTakeCounter(Base):
     utterance_id: Mapped[int] = mapped_column(ForeignKey("utterances.id", ondelete="RESTRICT"), primary_key=True)
     condition: Mapped[str] = mapped_column(String(20), primary_key=True)
     last_take_number: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class RecordingSubmission(Base):
@@ -193,8 +194,8 @@ class RecordingSubmission(Base):
     state: Mapped[str] = mapped_column(String(20), default="PENDING")
     error_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class Transcription(Base):
@@ -207,8 +208,8 @@ class Transcription(Base):
     verification_status: Mapped[str] = mapped_column(String(30), default="PENDING")
     verifier_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     verifier_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
     recording = relationship("Recording", back_populates="transcription")
@@ -231,7 +232,7 @@ class TranscriptionHistory(Base):
     new_verification_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     previous_version: Mapped[int] = mapped_column(Integer, nullable=False)
     new_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
 
     transcription = relationship("Transcription", back_populates="history")
 
@@ -243,4 +244,4 @@ class AuditLog(Base):
     entity_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
     entity_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
