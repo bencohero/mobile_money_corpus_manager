@@ -32,9 +32,6 @@
 </nav>
 {% endif %}
 <main id="contenu">{% block content %}{% endblock %}</main>
-<script>
-function cookieValue(name){return document.cookie.split("; ").find(v=>v.startsWith(name+"="))?.split("=").slice(1).join("=")||""}
-document.querySelectorAll("form[method=post]").forEach(form=>{if(!form.querySelector("input[name=csrf_token]")){const input=document.createElement("input");input.type="hidden";input.name="csrf_token";input.value=decodeURIComponent(cookieValue("csrf_token"));form.prepend(input)}});
-</script>
+<script src="/static/base.js" defer></script>
 </body>
 </html>

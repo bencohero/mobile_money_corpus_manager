@@ -17,7 +17,7 @@
   <div class="submit-zone"><button id="upload" type="button" class="ok" disabled>✓ Enregistrer sur le serveur</button><button id="cancel" type="button" class="secondary" disabled>Annuler la capture</button></div>
 </section></div>
 <script src="/static/record_capture.js"></script>
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 const capture = new RecordingCapture.CaptureState();
 const statusEl = document.getElementById("status"), start = document.getElementById("start");
 const stop = document.getElementById("stop"), upload = document.getElementById("upload");

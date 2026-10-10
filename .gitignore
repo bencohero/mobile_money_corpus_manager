@@ -9,4 +9,13 @@ RAPPORT_*.md
 scripts/*
 !scripts/security_checks.sh
 !scripts/check_workshop_references.py
+!scripts/backup.sh
+!scripts/restore.sh
+!scripts/reconcile.py
+!scripts/reconcile_participant_registration_schema.py
+!scripts/diagnose_workshop_migration.py
+!scripts/benchmark_remediation_c.py
+!scripts/validate_p0a.sh
+!scripts/validate_p0a2.sh
+!scripts/reset_corpus_data.sh
 backups/

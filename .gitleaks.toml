@@ -1,0 +1,6 @@
+# Graphify's tracked statistics index contains SHA-256 file fingerprints, not
+# credentials. Keep the exception limited to this generated file; scan source,
+# configuration and release artifacts normally.
+[allowlist]
+description = "Generated Graphify stat index contains content fingerprints"
+paths = ['''^graphify-out/cache/stat-index\.json$''']

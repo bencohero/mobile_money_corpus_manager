@@ -1,0 +1,36 @@
+# E.1 isolation layer. This file must be combined with docker-compose.test.yml.
+# It deliberately uses new volume/network names and never attaches to production.
+services:
+  db-test:
+    volumes:
+      - e1-test-pgdata:/var/lib/postgresql/data
+  minio-test:
+    volumes:
+      - e1-test-miniodata:/data
+  db-restore:
+    volumes:
+      - e1-test-restore-pgdata:/var/lib/postgresql/data
+  minio-restore:
+    volumes:
+      - e1-test-restore-miniodata:/data
+  app-test:
+    command: ["sh", "-c", "alembic upgrade head && alembic current && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+  tools:
+    volumes:
+      - e1-test-backup:/backup
+
+networks:
+  p0a2-test:
+    name: mobile-money-corpus-e1-test
+
+volumes:
+  e1-test-pgdata:
+    name: mobile-money-corpus-e1-test-pgdata
+  e1-test-miniodata:
+    name: mobile-money-corpus-e1-test-miniodata
+  e1-test-restore-pgdata:
+    name: mobile-money-corpus-e1-test-restore-pgdata
+  e1-test-restore-miniodata:
+    name: mobile-money-corpus-e1-test-restore-miniodata
+  e1-test-backup:
+    name: mobile-money-corpus-e1-test-backup

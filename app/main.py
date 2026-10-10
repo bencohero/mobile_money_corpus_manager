@@ -25,36 +25,32 @@ from .rate_limit import login_limiter, registration_limiter, workshop_language_l
 from .time_utils import as_utc_naive, utc_now
 from .schema_guard import SchemaRevisionError, assert_schema_current
 from .workshops import require_active_participant_workshop, workshop_is_open
+from .audio_processing import (
+    ConversionSaturated,
+    run_audio_command as _run_audio_command,
+    operation_id,
+    audio_error,
+    compensate_uploaded as _compensate_uploaded,
+    CONVERSION_SLOTS as _default_conversion_slots,
+)
+from .audit import audit, new_csrf_token, check_csrf, set_csrf_cookie
 
 logger = logging.getLogger("mobile_money_corpus_manager")
 ALLOWED_AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/mpeg"}
 ALLOWED_CONDITIONS = {"CLEAN", "NOISY"}
-CONVERSION_SLOTS = __import__("threading").BoundedSemaphore(settings.max_concurrent_conversions)
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 100
-class ConversionSaturated(Exception): pass
+CONVERSION_SLOTS = _default_conversion_slots
+
+
 def run_audio_command(args, **kwargs):
-    if not CONVERSION_SLOTS.acquire(blocking=False):
-        raise ConversionSaturated()
-    try:
-        return subprocess.run(args, shell=False, **kwargs)
-    finally:
-        CONVERSION_SLOTS.release()
+    """Compatibility seam for route tests while delegating to the audio service."""
+    return _run_audio_command(args, slots=CONVERSION_SLOTS, **kwargs)
 
-def operation_id(request):
-    return request.headers.get("x-request-id") or uuid.uuid4().hex
-
-def audio_error(request, status_code, message):
-    op = operation_id(request)
-    logger.warning("audio operation failed", extra={"operation_id": op, "status_code": status_code})
-    return HTTPException(status_code, message, headers={"X-Operation-ID": op})
 
 def compensate_uploaded(uploaded, request):
-    for object_name in uploaded:
-        try:
-            delete_file(object_name)
-        except Exception:
-            logger.error("MinIO compensation failed; reconciliation required", extra={"operation_id": operation_id(request)})
+    """Delegate compensation while retaining the main-module storage seam."""
+    return _compensate_uploaded(uploaded, request, delete=delete_file)
 
 
 app = FastAPI(title="Mobile Money Corpus Manager")
@@ -62,11 +58,14 @@ app = FastAPI(title="Mobile Money Corpus Manager")
 
 class SecurityHeadersMiddleware:
     async def __call__(self, scope, receive, send):
+        nonce = secrets.token_urlsafe(16)
+        scope.setdefault("state", {})["csp_nonce"] = nonce
+
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
                 security = {
-                    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+                    "content-security-policy": f"default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
                     "x-content-type-options": "nosniff",
                     "referrer-policy": "strict-origin-when-cross-origin",
                     "permissions-policy": "microphone=(self)",
@@ -91,6 +90,13 @@ if settings.app_env == "production" and _trusted_hosts == ["*"]:
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts or [settings.app_host])
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
+
+
+def render_template(name, context, **kwargs):
+    """Render templates using Starlette's keyword-only request contract."""
+    return templates.TemplateResponse(
+        request=context["request"], name=name, context=context, **kwargs
+    )
 
 @app.on_event("startup")
 def startup():
@@ -123,25 +129,6 @@ def require(request: Request, db: Session, roles=None):
         raise HTTPException(403)
     return user
 
-def audit(db, user, action, entity_type=None, entity_id=None, detail=None):
-    db.add(AuditLog(user_id=user.id if user else None, action=action,
-                    entity_type=entity_type, entity_id=str(entity_id) if entity_id else None,
-                    detail=detail))
-    db.commit()
-
-def new_csrf_token() -> str:
-    return secrets.token_urlsafe(32)
-
-def check_csrf(request: Request, token: str | None = None):
-    supplied = token or request.headers.get("x-csrf-token")
-    expected = request.cookies.get("csrf_token")
-    if not supplied or not expected or not secrets.compare_digest(supplied, expected):
-        raise HTTPException(403, "Requête expirée ou invalide. Rechargez la page.")
-
-def set_csrf_cookie(response: Response, token: str):
-    response.set_cookie("csrf_token", token, httponly=False, samesite="strict",
-                        secure=settings.cookie_secure, max_age=settings.access_token_minutes * 60)
-
 @app.get("/health")
 def health():
     """Liveness probe: the process is serving requests."""
@@ -163,12 +150,12 @@ def readiness(db: Session = Depends(get_db)):
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     token = new_csrf_token()
-    response = templates.TemplateResponse("login.html", {"request":request, "csrf_token":token})
+    response = render_template("login.html", {"request":request, "csrf_token":token})
     set_csrf_cookie(response, token)
     return response
 
 @app.post("/login")
-def login(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...), db: Session = Depends(get_db)):
+def login(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(""), db: Session = Depends(get_db)):
     check_csrf(request, csrf_token)
     login_scope = f"login:{username.casefold()}"
     login_limiter.check(request, login_scope, db=db, record=False)
@@ -178,7 +165,7 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
         user = participant.user if participant else None
     if not user or not user.is_active or not verify_password(password, user.password_hash):
         login_limiter.record(request, login_scope, db=db)
-        return templates.TemplateResponse("login.html", {"request":request,"error":"Identifiants incorrects", "csrf_token":csrf_token}, status_code=401)
+        return render_template("login.html", {"request":request,"error":"Identifiants incorrects", "csrf_token":csrf_token}, status_code=401)
     token = create_token(user)
     resp = RedirectResponse("/", status_code=303)
     resp.set_cookie("session", token, httponly=True, samesite="strict", secure=settings.cookie_secure, max_age=settings.access_token_minutes * 60)
@@ -190,7 +177,7 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
 @app.get("/participant/register", response_class=HTMLResponse)
 def participant_registration_page(request: Request):
     token = new_csrf_token()
-    response = templates.TemplateResponse("participant_register.html", {"request": request, "csrf_token": token})
+    response = render_template("participant_register.html", {"request": request, "csrf_token": token})
     set_csrf_cookie(response, token)
     return response
 
@@ -269,7 +256,7 @@ async def participant_registration_api(request: Request, db: Session = Depends(g
     }
 
 @app.post("/logout")
-def logout(request: Request, csrf_token: str = Form(...)):
+def logout(request: Request, csrf_token: str = Form("")):
     check_csrf(request, csrf_token)
     resp=RedirectResponse("/login",303)
     resp.delete_cookie("session")
@@ -278,7 +265,7 @@ def logout(request: Request, csrf_token: str = Form(...)):
 @app.get("/help", response_class=HTMLResponse)
 def participant_help(request: Request, db: Session = Depends(get_db)):
     user = require(request, db, ["PARTICIPANT"])
-    return templates.TemplateResponse("participant_help.html", {"request": request, "user": user})
+    return render_template("participant_help.html", {"request": request, "user": user})
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
@@ -287,13 +274,13 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     if user.role == "PARTICIPANT":
         participant = db.get(Participant, user.participant_id)
         if not participant:
-            return templates.TemplateResponse("message.html", {"request": request, "user": user,
+            return render_template("message.html", {"request": request, "user": user,
                 "message": "Votre compte participant n’est pas disponible. Contactez l’équipe."}, status_code=403)
         recordings_count = db.query(Recording).filter(
             Recording.participant_id == participant.id, Recording.sync_status == "READY"
         ).count()
         workshop_open = bool(participant.workshop and workshop_is_open(participant.workshop))
-        return templates.TemplateResponse("dashboard.html", {"request": request, "user": user,
+        return render_template("dashboard.html", {"request": request, "user": user,
             "participant": participant, "participant_recordings": recordings_count,
             "workshop_open": workshop_open})
     qrec = db.query(Recording).filter(Recording.sync_status == "READY")
@@ -306,7 +293,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "verified": qrec.filter(Recording.status=="VERIFIED").count(),
     }
     latest=qrec.order_by(Recording.created_at.desc()).limit(10).all()
-    return templates.TemplateResponse("dashboard.html", {"request":request,"user":user,"stats":stats,"latest":latest})
+    return render_template("dashboard.html", {"request":request,"user":user,"stats":stats,"latest":latest})
 
 @app.get("/participants", response_class=HTMLResponse)
 def participants(request: Request, db: Session = Depends(get_db)):
@@ -318,7 +305,7 @@ def participants(request: Request, db: Session = Depends(get_db)):
         except ValueError: raise HTTPException(400, "Atelier invalide")
     items=query.all()
     workshops=db.query(Workshop).order_by(Workshop.name).all()
-    return templates.TemplateResponse("participants.html", {"request":request,"user":user,"items":items,"workshops":workshops,"selected_workshop_id":workshop_id})
+    return render_template("participants.html", {"request":request,"user":user,"items":items,"workshops":workshops,"selected_workshop_id":workshop_id})
 
 @app.post("/participants")
 def create_participant(
@@ -385,9 +372,9 @@ def record_page(request: Request, db: Session=Depends(get_db)):
     if user.role=="PARTICIPANT":
         participant=db.get(Participant,user.participant_id)
         if not participant or not participant.consent_obtained:
-            return templates.TemplateResponse("message.html",{"request":request,"user":user,"message":"Consentement non enregistré. Contactez l'administrateur."},status_code=403)
+            return render_template("message.html",{"request":request,"user":user,"message":"Consentement non enregistré. Contactez l'administrateur."},status_code=403)
         if not participant.workshop or not workshop_is_open(participant.workshop):
-            return templates.TemplateResponse("message.html",{"request":request,"user":user,"message":"Cet atelier est terminé. Aucun nouvel enregistrement n’est possible."},status_code=403)
+            return render_template("message.html",{"request":request,"user":user,"message":"Cet atelier est terminé. Aucun nouvel enregistrement n’est possible."},status_code=403)
     else:
         participant=None
     utterances=db.query(Utterance).filter_by(active=True).order_by(Utterance.utterance_code).all()
@@ -405,7 +392,7 @@ def record_page(request: Request, db: Session=Depends(get_db)):
     if utterances:
         current_index = next((i for i, u in enumerate(utterances) if u.id == selected_utterance_id), 0)
         next_utterance_id = utterances[(current_index + 1) % len(utterances)].id
-    return templates.TemplateResponse(template,{"request":request,"user":user,"participant":participant,"participants":participants,
+    return render_template(template,{"request":request,"user":user,"participant":participant,"participants":participants,
         "utterances":utterances,"selected_utterance_id":selected_utterance_id,"phrase_number":phrase_number,
         "next_utterance_id":next_utterance_id})
 
@@ -570,7 +557,7 @@ def recordings_page(request: Request, db: Session=Depends(get_db)):
             "version": r.transcription.version if r.transcription else 0,
             "can_edit": r.status != "VERIFIED",
         } for r in visible]
-        return templates.TemplateResponse("transcriber_workspace.html", {
+        return render_template("transcriber_workspace.html", {
             "request": request, "user": user, "items": items, "visible": visible,
             "selected": selected, "payload": payload, "counts": {
             }, "active_filter": active_filter, "saved": request.query_params.get("saved") == "1",
@@ -586,7 +573,7 @@ def recordings_page(request: Request, db: Session=Depends(get_db)):
     items=q.options(joinedload(Recording.participant), joinedload(Recording.utterance)).order_by(Recording.created_at.desc(), Recording.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     workshops=db.query(Workshop).order_by(Workshop.name).all() if user.role=="ADMIN" else []
     template = "participant_recordings.html" if user.role == "PARTICIPANT" else "recordings.html"
-    return templates.TemplateResponse(template,{"request":request,"user":user,"items":items,"workshops":workshops,"selected_workshop_id":workshop_id,"page":page,"page_size":page_size,"total":total})
+    return render_template(template,{"request":request,"user":user,"items":items,"workshops":workshops,"selected_workshop_id":workshop_id,"page":page,"page_size":page_size,"total":total})
 
 @app.get("/audio/{recording_id}")
 def audio(recording_id:int, request:Request, db:Session=Depends(get_db)):
@@ -635,13 +622,13 @@ def transcribe_page(recording_id:int, request:Request, db:Session=Depends(get_db
     if rec.sync_status != "READY": raise HTTPException(409, "Audio non finalisé")
     if user.role=="PARTICIPANT" and rec.participant_id!=user.participant_id:
         raise HTTPException(403)
-    return templates.TemplateResponse("transcribe.html",{"request":request,"user":user,"rec":rec})
+    return render_template("transcribe.html",{"request":request,"user":user,"rec":rec})
 
 @app.post("/transcribe/{recording_id}")
 def save_transcription(
     recording_id:int, request:Request,
     reference_transcription:str=Form(...),
-    normalized_transcription:str=Form(""), return_filter:str=Form(""), version:int | None=Form(None), csrf_token:str=Form(...),
+    normalized_transcription:str=Form(""), return_filter:str=Form(""), version:int | None=Form(None), csrf_token:str=Form(""),
     db:Session=Depends(get_db)
 ):
     user=require(request,db,["ADMIN","PARTICIPANT","TRANSCRIBER"])
@@ -789,7 +776,7 @@ def verify(
 def users_page(request:Request, db:Session=Depends(get_db)):
     user=require(request,db,["ADMIN"])
     items=db.query(User).order_by(User.username).all()
-    return templates.TemplateResponse("users.html",{"request":request,"user":user,"items":items})
+    return render_template("users.html",{"request":request,"user":user,"items":items})
 
 @app.post("/users")
 def create_user(request:Request,username:str=Form(...),password:str=Form(...),role:str=Form(...),csrf_token:str=Form(...),db:Session=Depends(get_db)):
@@ -817,7 +804,7 @@ def workshop_codes_page(request: Request, db: Session = Depends(get_db)):
     user = require(request, db, ["ADMIN"])
     items = db.query(WorkshopCode).order_by(WorkshopCode.created_at.desc()).all()
     workshops = db.query(Workshop).order_by(Workshop.name).all()
-    return templates.TemplateResponse("workshop_codes.html", {"request": request, "user": user, "items": items, "workshops": workshops, "languages": LANGUAGES, "language_name": language_name})
+    return render_template("workshop_codes.html", {"request": request, "user": user, "items": items, "workshops": workshops, "languages": LANGUAGES, "language_name": language_name})
 
 
 @app.post("/admin/workshop-codes", response_class=HTMLResponse)
@@ -865,7 +852,7 @@ def create_workshop_code(request: Request, label: str = Form(...), language_code
     audit(db, admin, "CREATE_WORKSHOP_CODE", "workshop_code", item.id)
     items = db.query(WorkshopCode).order_by(WorkshopCode.created_at.desc()).all()
     workshops = db.query(Workshop).order_by(Workshop.name).all()
-    return templates.TemplateResponse("workshop_codes.html", {
+    return render_template("workshop_codes.html", {
         "request": request, "user": admin, "items": items, "workshops": workshops, "languages": LANGUAGES, "language_name": language_name, "revealed_code": plain_code,
     }, status_code=201)
 
@@ -933,7 +920,7 @@ def delete_recording(recording_id: int, request: Request, csrf_token: str = Form
 @app.get("/admin/export", response_class=HTMLResponse)
 def corpus_export_page(request: Request, db: Session = Depends(get_db)):
     user = require(request, db, ["ADMIN"])
-    return templates.TemplateResponse("export.html", {"request": request, "user": user, "workshops": db.query(Workshop).order_by(Workshop.name).all()})
+    return render_template("export.html", {"request": request, "user": user, "workshops": db.query(Workshop).order_by(Workshop.name).all()})
 
 @app.post("/admin/export/corpus")
 def corpus_export(request: Request, mode: str = Form("work"), status: str = Form(""), verification_status: str = Form(""), condition: str = Form(""), participant: str = Form(""), intent: str = Form(""), has_transcription: str = Form(""), date_min: str = Form(""), date_max: str = Form(""), workshop_id: str = Form(""), strict: str = Form("true"), csrf_token: str | None = Form(None), db: Session = Depends(get_db)):
