@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, HTTPExcep
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -186,10 +186,27 @@ def logout(request: Request, csrf_token: str = Form(...)):
     resp.delete_cookie("session")
     return resp
 
+@app.get("/help", response_class=HTMLResponse)
+def participant_help(request: Request, db: Session = Depends(get_db)):
+    user = require(request, db, ["PARTICIPANT"])
+    return templates.TemplateResponse("participant_help.html", {"request": request, "user": user})
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
     user = current(request,db)
     if not user: return RedirectResponse("/login",303)
+    if user.role == "PARTICIPANT":
+        participant = db.get(Participant, user.participant_id)
+        if not participant:
+            return templates.TemplateResponse("message.html", {"request": request, "user": user,
+                "message": "Votre compte participant n’est pas disponible. Contactez l’équipe."}, status_code=403)
+        recordings_count = db.query(Recording).filter(
+            Recording.participant_id == participant.id, Recording.sync_status == "READY"
+        ).count()
+        workshop_open = bool(participant.workshop and workshop_is_open(participant.workshop))
+        return templates.TemplateResponse("dashboard.html", {"request": request, "user": user,
+            "participant": participant, "participant_recordings": recordings_count,
+            "workshop_open": workshop_open})
     qrec = db.query(Recording).filter(Recording.sync_status == "READY")
     if user.role=="PARTICIPANT" and user.participant_id:
         qrec=qrec.filter(Recording.participant_id==user.participant_id)
@@ -272,15 +289,31 @@ def reset_participant_password(participant_id: int, request: Request, password: 
 def record_page(request: Request, db: Session=Depends(get_db)):
     user=require(request,db,["PARTICIPANT","ADMIN"])
     if user.role=="PARTICIPANT":
-        require_active_participant_workshop(db, user)
         participant=db.get(Participant,user.participant_id)
         if not participant or not participant.consent_obtained:
             return templates.TemplateResponse("message.html",{"request":request,"user":user,"message":"Consentement non enregistré. Contactez l'administrateur."},status_code=403)
+        if not participant.workshop or not workshop_is_open(participant.workshop):
+            return templates.TemplateResponse("message.html",{"request":request,"user":user,"message":"Cet atelier est terminé. Aucun nouvel enregistrement n’est possible."},status_code=403)
     else:
         participant=None
     utterances=db.query(Utterance).filter_by(active=True).order_by(Utterance.utterance_code).all()
     participants=db.query(Participant).order_by(Participant.participant_code).all() if user.role=="ADMIN" else []
-    return templates.TemplateResponse("record.html",{"request":request,"user":user,"participant":participant,"participants":participants,"utterances":utterances})
+    template = "participant_record.html" if user.role == "PARTICIPANT" else "record.html"
+    requested_utterance_id = request.query_params.get("utterance_id")
+    selected_utterance_id = utterances[0].id if utterances else None
+    phrase_number = 1
+    if participant and utterances:
+        requested_id = int(requested_utterance_id) if requested_utterance_id and requested_utterance_id.isdigit() else None
+        if requested_id in {u.id for u in utterances}:
+            selected_utterance_id = requested_id
+        phrase_number = next((i + 1 for i, u in enumerate(utterances) if u.id == selected_utterance_id), 1)
+    next_utterance_id = None
+    if utterances:
+        current_index = next((i for i, u in enumerate(utterances) if u.id == selected_utterance_id), 0)
+        next_utterance_id = utterances[(current_index + 1) % len(utterances)].id
+    return templates.TemplateResponse(template,{"request":request,"user":user,"participant":participant,"participants":participants,
+        "utterances":utterances,"selected_utterance_id":selected_utterance_id,"phrase_number":phrase_number,
+        "next_utterance_id":next_utterance_id})
 
 def recording_context(db, user, participant_id, utterance_id, condition):
     if user.role == "PARTICIPANT":
@@ -403,6 +436,38 @@ def upload_recording(
 def recordings_page(request: Request, db: Session=Depends(get_db)):
     user=require(request,db,["ADMIN","PARTICIPANT","TRANSCRIBER","VALIDATOR"])
     q=db.query(Recording).filter(Recording.sync_status == "READY")
+    if user.role == "TRANSCRIBER":
+        items = q.options(
+            joinedload(Recording.participant), joinedload(Recording.utterance),
+            joinedload(Recording.transcription)
+        ).order_by(Recording.created_at.desc()).all()
+        pending = [r for r in items if r.transcription is None]
+        transcribed = [r for r in items if r.transcription is not None]
+        active_filter = request.query_params.get("filter", "todo")
+        if active_filter not in {"todo", "transcribed", "all"}:
+            active_filter = "todo"
+        visible = {"todo": pending, "transcribed": transcribed, "all": items}[active_filter]
+        selected_raw = request.query_params.get("selected")
+        selected_id = int(selected_raw) if selected_raw and selected_raw.isdigit() else None
+        selected = next((r for r in visible if r.id == selected_id), visible[0] if visible else None)
+        payload = [{
+            "id": r.id, "audio_id": r.audio_id, "participant": r.participant.participant_code,
+            "intent": r.utterance.intent, "utterance_code": r.utterance.utterance_code,
+            "scenario": r.utterance.scenario_fr, "condition": r.condition,
+            "take_number": r.take_number, "duration_ms": r.duration_ms or 0,
+            "created_at": r.created_at.strftime("%d/%m/%Y à %H:%M"),
+            "status": r.status, "has_transcription": r.transcription is not None,
+            "verification_status": r.transcription.verification_status if r.transcription else "",
+            "reference_transcription": r.transcription.reference_transcription if r.transcription else "",
+            "normalized_transcription": r.transcription.normalized_transcription if r.transcription else "",
+            "can_edit": r.status != "VERIFIED",
+        } for r in items]
+        return templates.TemplateResponse("transcriber_workspace.html", {
+            "request": request, "user": user, "items": items, "visible": visible,
+            "selected": selected, "payload": payload, "counts": {
+                "todo": len(pending), "transcribed": len(transcribed), "all": len(items)
+            }, "active_filter": active_filter, "saved": request.query_params.get("saved") == "1",
+        })
     if user.role=="PARTICIPANT":
         q=q.filter(Recording.participant_id==user.participant_id)
     workshop_id = request.query_params.get("workshop_id")
@@ -411,7 +476,8 @@ def recordings_page(request: Request, db: Session=Depends(get_db)):
         except ValueError: raise HTTPException(400,"Atelier invalide")
     items=q.order_by(Recording.created_at.desc()).all()
     workshops=db.query(Workshop).order_by(Workshop.name).all() if user.role=="ADMIN" else []
-    return templates.TemplateResponse("recordings.html",{"request":request,"user":user,"items":items,"workshops":workshops,"selected_workshop_id":workshop_id})
+    template = "participant_recordings.html" if user.role == "PARTICIPANT" else "recordings.html"
+    return templates.TemplateResponse(template,{"request":request,"user":user,"items":items,"workshops":workshops,"selected_workshop_id":workshop_id})
 
 @app.get("/audio/{recording_id}")
 def audio(recording_id:int, request:Request, db:Session=Depends(get_db)):
@@ -437,7 +503,7 @@ def transcribe_page(recording_id:int, request:Request, db:Session=Depends(get_db
 def save_transcription(
     recording_id:int, request:Request,
     reference_transcription:str=Form(...),
-    normalized_transcription:str=Form(""), csrf_token:str=Form(...),
+    normalized_transcription:str=Form(""), return_filter:str=Form(""), csrf_token:str=Form(...),
     db:Session=Depends(get_db)
 ):
     user=require(request,db,["ADMIN","PARTICIPANT","TRANSCRIBER"])
@@ -463,6 +529,13 @@ def save_transcription(
     rec.status="TRANSCRIBED"
     db.commit()
     audit(db,user,"SAVE_TRANSCRIPTION","recording",rec.id)
+    if user.role == "TRANSCRIBER":
+        next_recording = db.query(Recording).options(joinedload(Recording.transcription)).filter(
+            Recording.sync_status == "READY", Recording.transcription == None, Recording.id != rec.id
+        ).order_by(Recording.created_at.desc()).first()
+        if next_recording:
+            return RedirectResponse(f"/recordings?filter=todo&selected={next_recording.id}&saved=1",303)
+        return RedirectResponse(f"/recordings?filter=transcribed&selected={rec.id}&saved=1",303)
     return RedirectResponse("/recordings",303)
 
 @app.post("/verify/{recording_id}")

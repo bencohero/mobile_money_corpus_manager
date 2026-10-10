@@ -2,11 +2,11 @@
 <section class="login-card card">
   <span class="eyebrow">Accès sécurisé</span>
   <h1>Connexion</h1>
-  <p class="muted">Connectez-vous pour gérer les enregistrements, les transcriptions et les validations du corpus.</p>
+  <p class="muted">Entrez votre identifiant et votre mot de passe pour commencer.</p>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Nom d'utilisateur</label>
-    <input name="username" required autocomplete="username">
+    <label for="login-username">Identifiant</label>
+    <input id="login-username" name="username" required autocomplete="username">
     <label for="login-password">Mot de passe</label>
     <input id="login-password" name="password" type="password" required autocomplete="current-password">
     <div class="actions"><button>Se connecter</button><a class="btn secondary" href="/participant/register">Créer un compte participant</a></div>
