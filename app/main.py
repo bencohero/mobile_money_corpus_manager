@@ -34,6 +34,7 @@ from .audio_processing import (
     CONVERSION_SLOTS as _default_conversion_slots,
 )
 from .audit import audit, new_csrf_token, check_csrf, set_csrf_cookie
+from .write_freeze import WriteFreezeMiddleware
 
 logger = logging.getLogger("mobile_money_corpus_manager")
 ALLOWED_AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/mpeg"}
@@ -54,6 +55,7 @@ def compensate_uploaded(uploaded, request):
 
 
 app = FastAPI(title="Mobile Money Corpus Manager")
+app.add_middleware(WriteFreezeMiddleware)
 
 
 class SecurityHeadersMiddleware:

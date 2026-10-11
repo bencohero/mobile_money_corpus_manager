@@ -1,0 +1,18 @@
+name: f4-traefik-candidate
+
+# Candidate only. It is not mounted by the live Traefik project.
+services:
+  traefik:
+    image: traefik:v3.7
+    container_name: f4-traefik-candidate
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./traefik.yml:/traefik.yml:ro
+      - ./config.yml:/etc/traefik/config.yml:ro
+    networks: [f4-frontend]
+
+networks:
+  f4-frontend:
+    name: f4-traefik-candidate-network

@@ -10,6 +10,7 @@ scripts/*
 !scripts/security_checks.sh
 !scripts/check_workshop_references.py
 !scripts/backup.sh
+!scripts/backup_local.sh
 !scripts/restore.sh
 !scripts/reconcile.py
 !scripts/reconcile_participant_registration_schema.py

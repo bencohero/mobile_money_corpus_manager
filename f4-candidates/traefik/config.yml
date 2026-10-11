@@ -1,0 +1,6 @@
+# Candidate-only placeholder. The live ACME, CrowdSec and router configuration is
+# intentionally not copied here. Dashboard access must be designed and approved
+# before adding an api@internal router.
+http:
+  routers: {}
+  services: {}
