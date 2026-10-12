@@ -6,3 +6,5 @@ AUDIT_*.md
 prompt_*.md
 RAPPORT_*.md
 scripts/
+!scripts/
+!scripts/backup_local.sh
