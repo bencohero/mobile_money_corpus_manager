@@ -1,0 +1,45 @@
+# G5 isolated validation overlay. Use with docker-compose.test.yml.
+name: mobile-money-corpus-g5-validation
+
+services:
+  db-test:
+    networks: !reset [g5-test]
+    volumes:
+      - g5-test-pgdata:/var/lib/postgresql/data
+  minio-test:
+    networks: !reset [g5-test]
+    volumes:
+      - g5-test-miniodata:/data
+  db-restore:
+    networks: !reset [g5-test]
+    volumes:
+      - g5-test-restore-pgdata:/var/lib/postgresql/data
+  minio-restore:
+    networks: !reset [g5-test]
+    volumes:
+      - g5-test-restore-miniodata:/data
+  app-test:
+    networks: !reset [g5-test]
+  test:
+    networks: !reset [g5-test]
+  tools:
+    networks: !reset [g5-test]
+    volumes:
+      - g5-test-backup:/backup
+
+networks:
+  g5-test:
+    name: mobile-money-corpus-g5-validation
+    driver: bridge
+
+volumes:
+  g5-test-pgdata:
+    name: mobile-money-corpus-g5-validation-pgdata
+  g5-test-miniodata:
+    name: mobile-money-corpus-g5-validation-miniodata
+  g5-test-restore-pgdata:
+    name: mobile-money-corpus-g5-validation-restore-pgdata
+  g5-test-restore-miniodata:
+    name: mobile-money-corpus-g5-validation-restore-miniodata
+  g5-test-backup:
+    name: mobile-money-corpus-g5-validation-backup

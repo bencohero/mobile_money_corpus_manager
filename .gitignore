@@ -23,3 +23,5 @@ scripts/*
 !scripts/validate_benco_login_internal.sh
 !scripts/validate_old_benco_password_internal.sh
 backups/*
+!scripts/migrate.sh
+backups/

@@ -78,3 +78,12 @@ def test_alembic_head_and_runtime_files_exist():
     assert "COPY migrations ./migrations" in dockerfile
     assert "COPY alembic.ini ./alembic.ini" in dockerfile
     assert "ffmpeg" in dockerfile
+
+
+def test_application_startup_does_not_apply_migrations_implicitly():
+    compose_text = (ROOT / "docker-compose.test.yml").read_text()
+    e1_text = (ROOT / "docker-compose.e1.test.yml").read_text()
+    assert "alembic upgrade" not in compose_text
+    assert "alembic upgrade" not in e1_text
+    assert (ROOT / "scripts/migrate.sh").is_file()
+    assert "alembic" in (ROOT / "scripts/migrate.sh").read_text()

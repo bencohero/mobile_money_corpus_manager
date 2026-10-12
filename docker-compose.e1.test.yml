@@ -14,7 +14,7 @@ services:
     volumes:
       - e1-test-restore-miniodata:/data
   app-test:
-    command: ["sh", "-c", "alembic upgrade head && alembic current && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
   tools:
     volumes:
       - e1-test-backup:/backup
