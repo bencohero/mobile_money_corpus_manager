@@ -1,0 +1,824 @@
+[
+  {
+    "name": "login",
+    "width": 320,
+    "url": "http://192.168.0.6:8000/login",
+    "overflow": false,
+    "viewport": {
+      "width": 320,
+      "scrollWidth": 320,
+      "scrollHeight": 844,
+      "bodyWidth": 320,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/login-320.png"
+  },
+  {
+    "name": "register",
+    "width": 320,
+    "url": "http://192.168.0.6:8000/participant/register",
+    "overflow": false,
+    "viewport": {
+      "width": 320,
+      "scrollWidth": 320,
+      "scrollHeight": 1321,
+      "bodyWidth": 320,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/register-320.png"
+  },
+  {
+    "name": "dashboard",
+    "width": 320,
+    "url": "http://192.168.0.6:8000/",
+    "overflow": false,
+    "viewport": {
+      "width": 320,
+      "scrollWidth": 320,
+      "scrollHeight": 1276,
+      "bodyWidth": 320,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/dashboard-320.png"
+  },
+  {
+    "name": "participants",
+    "width": 320,
+    "url": "http://192.168.0.6:8000/participants",
+    "overflow": false,
+    "viewport": {
+      "width": 320,
+      "scrollWidth": 320,
+      "scrollHeight": 2736,
+      "bodyWidth": 320,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/participants-320.png"
+  },
+  {
+    "name": "recordings",
+    "width": 320,
+    "url": "http://192.168.0.6:8000/recordings",
+    "overflow": false,
+    "viewport": {
+      "width": 320,
+      "scrollWidth": 320,
+      "scrollHeight": 4937,
+      "bodyWidth": 320,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/recordings-320.png"
+  },
+  {
+    "name": "record",
+    "width": 320,
+    "url": "http://192.168.0.6:8000/record",
+    "overflow": false,
+    "viewport": {
+      "width": 320,
+      "scrollWidth": 320,
+      "scrollHeight": 1284,
+      "bodyWidth": 320,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/record-320.png"
+  },
+  {
+    "name": "users",
+    "width": 320,
+    "url": "http://192.168.0.6:8000/users",
+    "overflow": false,
+    "viewport": {
+      "width": 320,
+      "scrollWidth": 320,
+      "scrollHeight": 2874,
+      "bodyWidth": 320,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/users-320.png"
+  },
+  {
+    "name": "export",
+    "width": 320,
+    "url": "http://192.168.0.6:8000/admin/export",
+    "overflow": false,
+    "viewport": {
+      "width": 320,
+      "scrollWidth": 320,
+      "scrollHeight": 1235,
+      "bodyWidth": 320,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/export-320.png"
+  },
+  {
+    "name": "participant-help-authorization",
+    "width": 320,
+    "status": 403,
+    "expected": 403
+  },
+  {
+    "name": "simulated-microphone",
+    "width": 320,
+    "started": true,
+    "stopped": true,
+    "microphoneError": null,
+    "uploadStatus": "not-run",
+    "url": "http://192.168.0.6:8000/record"
+  },
+  {
+    "name": "keyboard-focus",
+    "width": 320,
+    "active": "BODY"
+  },
+  {
+    "name": "browser-errors",
+    "width": 320,
+    "errors": []
+  },
+  {
+    "name": "login",
+    "width": 360,
+    "url": "http://192.168.0.6:8000/login",
+    "overflow": false,
+    "viewport": {
+      "width": 360,
+      "scrollWidth": 360,
+      "scrollHeight": 844,
+      "bodyWidth": 360,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/login-360.png"
+  },
+  {
+    "name": "register",
+    "width": 360,
+    "url": "http://192.168.0.6:8000/participant/register",
+    "overflow": false,
+    "viewport": {
+      "width": 360,
+      "scrollWidth": 360,
+      "scrollHeight": 1308,
+      "bodyWidth": 360,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/register-360.png"
+  },
+  {
+    "name": "dashboard",
+    "width": 360,
+    "url": "http://192.168.0.6:8000/",
+    "overflow": false,
+    "viewport": {
+      "width": 360,
+      "scrollWidth": 360,
+      "scrollHeight": 1280,
+      "bodyWidth": 360,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/dashboard-360.png"
+  },
+  {
+    "name": "participants",
+    "width": 360,
+    "url": "http://192.168.0.6:8000/participants",
+    "overflow": false,
+    "viewport": {
+      "width": 360,
+      "scrollWidth": 360,
+      "scrollHeight": 2708,
+      "bodyWidth": 360,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/participants-360.png"
+  },
+  {
+    "name": "recordings",
+    "width": 360,
+    "url": "http://192.168.0.6:8000/recordings",
+    "overflow": false,
+    "viewport": {
+      "width": 360,
+      "scrollWidth": 360,
+      "scrollHeight": 4930,
+      "bodyWidth": 360,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/recordings-360.png"
+  },
+  {
+    "name": "record",
+    "width": 360,
+    "url": "http://192.168.0.6:8000/record",
+    "overflow": false,
+    "viewport": {
+      "width": 360,
+      "scrollWidth": 360,
+      "scrollHeight": 1292,
+      "bodyWidth": 360,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/record-360.png"
+  },
+  {
+    "name": "users",
+    "width": 360,
+    "url": "http://192.168.0.6:8000/users",
+    "overflow": false,
+    "viewport": {
+      "width": 360,
+      "scrollWidth": 360,
+      "scrollHeight": 2858,
+      "bodyWidth": 360,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/users-360.png"
+  },
+  {
+    "name": "export",
+    "width": 360,
+    "url": "http://192.168.0.6:8000/admin/export",
+    "overflow": false,
+    "viewport": {
+      "width": 360,
+      "scrollWidth": 360,
+      "scrollHeight": 1243,
+      "bodyWidth": 360,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/export-360.png"
+  },
+  {
+    "name": "participant-help-authorization",
+    "width": 360,
+    "status": 403,
+    "expected": 403
+  },
+  {
+    "name": "simulated-microphone",
+    "width": 360,
+    "started": true,
+    "stopped": true,
+    "microphoneError": null,
+    "uploadStatus": "not-run",
+    "url": "http://192.168.0.6:8000/record"
+  },
+  {
+    "name": "keyboard-focus",
+    "width": 360,
+    "active": "BODY"
+  },
+  {
+    "name": "browser-errors",
+    "width": 360,
+    "errors": []
+  },
+  {
+    "name": "login",
+    "width": 390,
+    "url": "http://192.168.0.6:8000/login",
+    "overflow": false,
+    "viewport": {
+      "width": 390,
+      "scrollWidth": 390,
+      "scrollHeight": 844,
+      "bodyWidth": 390,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/login-390.png"
+  },
+  {
+    "name": "register",
+    "width": 390,
+    "url": "http://192.168.0.6:8000/participant/register",
+    "overflow": false,
+    "viewport": {
+      "width": 390,
+      "scrollWidth": 390,
+      "scrollHeight": 1273,
+      "bodyWidth": 390,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/register-390.png"
+  },
+  {
+    "name": "dashboard",
+    "width": 390,
+    "url": "http://192.168.0.6:8000/",
+    "overflow": false,
+    "viewport": {
+      "width": 390,
+      "scrollWidth": 390,
+      "scrollHeight": 1281,
+      "bodyWidth": 390,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/dashboard-390.png"
+  },
+  {
+    "name": "participants",
+    "width": 390,
+    "url": "http://192.168.0.6:8000/participants",
+    "overflow": false,
+    "viewport": {
+      "width": 390,
+      "scrollWidth": 390,
+      "scrollHeight": 2689,
+      "bodyWidth": 390,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/participants-390.png"
+  },
+  {
+    "name": "recordings",
+    "width": 390,
+    "url": "http://192.168.0.6:8000/recordings",
+    "overflow": false,
+    "viewport": {
+      "width": 390,
+      "scrollWidth": 390,
+      "scrollHeight": 4864,
+      "bodyWidth": 390,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/recordings-390.png"
+  },
+  {
+    "name": "record",
+    "width": 390,
+    "url": "http://192.168.0.6:8000/record",
+    "overflow": false,
+    "viewport": {
+      "width": 390,
+      "scrollWidth": 390,
+      "scrollHeight": 1294,
+      "bodyWidth": 390,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/record-390.png"
+  },
+  {
+    "name": "users",
+    "width": 390,
+    "url": "http://192.168.0.6:8000/users",
+    "overflow": false,
+    "viewport": {
+      "width": 390,
+      "scrollWidth": 390,
+      "scrollHeight": 2859,
+      "bodyWidth": 390,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/users-390.png"
+  },
+  {
+    "name": "export",
+    "width": 390,
+    "url": "http://192.168.0.6:8000/admin/export",
+    "overflow": false,
+    "viewport": {
+      "width": 390,
+      "scrollWidth": 390,
+      "scrollHeight": 1207,
+      "bodyWidth": 390,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/export-390.png"
+  },
+  {
+    "name": "participant-help-authorization",
+    "width": 390,
+    "status": 403,
+    "expected": 403
+  },
+  {
+    "name": "simulated-microphone",
+    "width": 390,
+    "started": true,
+    "stopped": true,
+    "microphoneError": null,
+    "uploadStatus": "Enregistré · prise 2 · MOS_001_MOS_I01_U001_CLEAN_T02",
+    "url": "http://192.168.0.6:8000/record"
+  },
+  {
+    "name": "keyboard-focus",
+    "width": 390,
+    "active": "A"
+  },
+  {
+    "name": "browser-errors",
+    "width": 390,
+    "errors": []
+  },
+  {
+    "name": "login",
+    "width": 412,
+    "url": "http://192.168.0.6:8000/login",
+    "overflow": false,
+    "viewport": {
+      "width": 412,
+      "scrollWidth": 412,
+      "scrollHeight": 844,
+      "bodyWidth": 412,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/login-412.png"
+  },
+  {
+    "name": "register",
+    "width": 412,
+    "url": "http://192.168.0.6:8000/participant/register",
+    "overflow": false,
+    "viewport": {
+      "width": 412,
+      "scrollWidth": 412,
+      "scrollHeight": 1262,
+      "bodyWidth": 412,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/register-412.png"
+  },
+  {
+    "name": "dashboard",
+    "width": 412,
+    "url": "http://192.168.0.6:8000/",
+    "overflow": false,
+    "viewport": {
+      "width": 412,
+      "scrollWidth": 412,
+      "scrollHeight": 1281,
+      "bodyWidth": 412,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/dashboard-412.png"
+  },
+  {
+    "name": "participants",
+    "width": 412,
+    "url": "http://192.168.0.6:8000/participants",
+    "overflow": false,
+    "viewport": {
+      "width": 412,
+      "scrollWidth": 412,
+      "scrollHeight": 2689,
+      "bodyWidth": 412,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/participants-412.png"
+  },
+  {
+    "name": "recordings",
+    "width": 412,
+    "url": "http://192.168.0.6:8000/recordings",
+    "overflow": false,
+    "viewport": {
+      "width": 412,
+      "scrollWidth": 412,
+      "scrollHeight": 4294,
+      "bodyWidth": 412,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/recordings-412.png"
+  },
+  {
+    "name": "record",
+    "width": 412,
+    "url": "http://192.168.0.6:8000/record",
+    "overflow": false,
+    "viewport": {
+      "width": 412,
+      "scrollWidth": 412,
+      "scrollHeight": 1275,
+      "bodyWidth": 412,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/record-412.png"
+  },
+  {
+    "name": "users",
+    "width": 412,
+    "url": "http://192.168.0.6:8000/users",
+    "overflow": false,
+    "viewport": {
+      "width": 412,
+      "scrollWidth": 412,
+      "scrollHeight": 2859,
+      "bodyWidth": 412,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/users-412.png"
+  },
+  {
+    "name": "export",
+    "width": 412,
+    "url": "http://192.168.0.6:8000/admin/export",
+    "overflow": false,
+    "viewport": {
+      "width": 412,
+      "scrollWidth": 412,
+      "scrollHeight": 1186,
+      "bodyWidth": 412,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/export-412.png"
+  },
+  {
+    "name": "participant-help-authorization",
+    "width": 412,
+    "status": 403,
+    "expected": 403
+  },
+  {
+    "name": "simulated-microphone",
+    "width": 412,
+    "started": true,
+    "stopped": true,
+    "microphoneError": null,
+    "uploadStatus": "not-run",
+    "url": "http://192.168.0.6:8000/record"
+  },
+  {
+    "name": "keyboard-focus",
+    "width": 412,
+    "active": "BODY"
+  },
+  {
+    "name": "browser-errors",
+    "width": 412,
+    "errors": []
+  },
+  {
+    "name": "login",
+    "width": 1280,
+    "url": "http://192.168.0.6:8000/login",
+    "overflow": false,
+    "viewport": {
+      "width": 1280,
+      "scrollWidth": 1280,
+      "scrollHeight": 900,
+      "bodyWidth": 1280,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/login-1280.png"
+  },
+  {
+    "name": "register",
+    "width": 1280,
+    "url": "http://192.168.0.6:8000/participant/register",
+    "overflow": false,
+    "viewport": {
+      "width": 1280,
+      "scrollWidth": 1280,
+      "scrollHeight": 1048,
+      "bodyWidth": 1280,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/register-1280.png"
+  },
+  {
+    "name": "dashboard",
+    "width": 1280,
+    "url": "http://192.168.0.6:8000/",
+    "overflow": false,
+    "viewport": {
+      "width": 1280,
+      "scrollWidth": 1280,
+      "scrollHeight": 1168,
+      "bodyWidth": 1280,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/dashboard-1280.png"
+  },
+  {
+    "name": "participants",
+    "width": 1280,
+    "url": "http://192.168.0.6:8000/participants",
+    "overflow": false,
+    "viewport": {
+      "width": 1280,
+      "scrollWidth": 1280,
+      "scrollHeight": 2405,
+      "bodyWidth": 1280,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/participants-1280.png"
+  },
+  {
+    "name": "recordings",
+    "width": 1280,
+    "url": "http://192.168.0.6:8000/recordings",
+    "overflow": false,
+    "viewport": {
+      "width": 1280,
+      "scrollWidth": 1280,
+      "scrollHeight": 2260,
+      "bodyWidth": 1280,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/recordings-1280.png"
+  },
+  {
+    "name": "record",
+    "width": 1280,
+    "url": "http://192.168.0.6:8000/record",
+    "overflow": false,
+    "viewport": {
+      "width": 1280,
+      "scrollWidth": 1280,
+      "scrollHeight": 900,
+      "bodyWidth": 1280,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/record-1280.png"
+  },
+  {
+    "name": "users",
+    "width": 1280,
+    "url": "http://192.168.0.6:8000/users",
+    "overflow": false,
+    "viewport": {
+      "width": 1280,
+      "scrollWidth": 1280,
+      "scrollHeight": 2712,
+      "bodyWidth": 1280,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/users-1280.png"
+  },
+  {
+    "name": "export",
+    "width": 1280,
+    "url": "http://192.168.0.6:8000/admin/export",
+    "overflow": false,
+    "viewport": {
+      "width": 1280,
+      "scrollWidth": 1280,
+      "scrollHeight": 920,
+      "bodyWidth": 1280,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/export-1280.png"
+  },
+  {
+    "name": "participant-help-authorization",
+    "width": 1280,
+    "status": 403,
+    "expected": 403
+  },
+  {
+    "name": "simulated-microphone",
+    "width": 1280,
+    "started": true,
+    "stopped": true,
+    "microphoneError": null,
+    "uploadStatus": "not-run",
+    "url": "http://192.168.0.6:8000/record"
+  },
+  {
+    "name": "keyboard-focus",
+    "width": 1280,
+    "active": "BODY"
+  },
+  {
+    "name": "browser-errors",
+    "width": 1280,
+    "errors": []
+  },
+  {
+    "name": "login",
+    "width": 1440,
+    "url": "http://192.168.0.6:8000/login",
+    "overflow": false,
+    "viewport": {
+      "width": 1440,
+      "scrollWidth": 1440,
+      "scrollHeight": 900,
+      "bodyWidth": 1440,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/login-1440.png"
+  },
+  {
+    "name": "register",
+    "width": 1440,
+    "url": "http://192.168.0.6:8000/participant/register",
+    "overflow": false,
+    "viewport": {
+      "width": 1440,
+      "scrollWidth": 1440,
+      "scrollHeight": 1048,
+      "bodyWidth": 1440,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/register-1440.png"
+  },
+  {
+    "name": "dashboard",
+    "width": 1440,
+    "url": "http://192.168.0.6:8000/",
+    "overflow": false,
+    "viewport": {
+      "width": 1440,
+      "scrollWidth": 1440,
+      "scrollHeight": 1168,
+      "bodyWidth": 1440,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/dashboard-1440.png"
+  },
+  {
+    "name": "participants",
+    "width": 1440,
+    "url": "http://192.168.0.6:8000/participants",
+    "overflow": false,
+    "viewport": {
+      "width": 1440,
+      "scrollWidth": 1440,
+      "scrollHeight": 2405,
+      "bodyWidth": 1440,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/participants-1440.png"
+  },
+  {
+    "name": "recordings",
+    "width": 1440,
+    "url": "http://192.168.0.6:8000/recordings",
+    "overflow": false,
+    "viewport": {
+      "width": 1440,
+      "scrollWidth": 1440,
+      "scrollHeight": 2260,
+      "bodyWidth": 1440,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/recordings-1440.png"
+  },
+  {
+    "name": "record",
+    "width": 1440,
+    "url": "http://192.168.0.6:8000/record",
+    "overflow": false,
+    "viewport": {
+      "width": 1440,
+      "scrollWidth": 1440,
+      "scrollHeight": 900,
+      "bodyWidth": 1440,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/record-1440.png"
+  },
+  {
+    "name": "users",
+    "width": 1440,
+    "url": "http://192.168.0.6:8000/users",
+    "overflow": false,
+    "viewport": {
+      "width": 1440,
+      "scrollWidth": 1440,
+      "scrollHeight": 2712,
+      "bodyWidth": 1440,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/users-1440.png"
+  },
+  {
+    "name": "export",
+    "width": 1440,
+    "url": "http://192.168.0.6:8000/admin/export",
+    "overflow": false,
+    "viewport": {
+      "width": 1440,
+      "scrollWidth": 1440,
+      "scrollHeight": 920,
+      "bodyWidth": 1440,
+      "active": "BODY"
+    },
+    "screenshot": "G5_1_artifacts/screenshots/export-1440.png"
+  },
+  {
+    "name": "participant-help-authorization",
+    "width": 1440,
+    "status": 403,
+    "expected": 403
+  },
+  {
+    "name": "simulated-microphone",
+    "width": 1440,
+    "started": true,
+    "stopped": true,
+    "microphoneError": null,
+    "uploadStatus": "not-run",
+    "url": "http://192.168.0.6:8000/record"
+  },
+  {
+    "name": "keyboard-focus",
+    "width": 1440,
+    "active": "A"
+  },
+  {
+    "name": "browser-errors",
+    "width": 1440,
+    "errors": []
+  }
+]
