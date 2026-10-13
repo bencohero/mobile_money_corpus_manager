@@ -111,7 +111,7 @@ manifest = {"schema": 2, "status": "COMPLETE", "mode": sys.argv[2], "target_id":
             "minio_object_count": int((root / "manifests/minio_source_count.txt").read_text())}
 (root / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 PY
-(cd "$TMP" && find postgres minio manifests MANIFEST.json -type f ! -path 'manifests/SHA256SUMS' -print0 | sort -z | xargs -0 sha256sum > manifests/SHA256SUMS)
+(cd "$TMP" && find postgres minio manifests MANIFEST.json -type f ! -path 'manifests/SHA256SUMS' -print0 | sort -z | xargs --null --no-run-if-empty sha256sum > manifests/SHA256SUMS)
 (cd "$TMP" && sha256sum --check manifests/SHA256SUMS >/dev/null)
 printf 'status=COMPLETE\nbackup_id=%s\n' "$BACKUP_ID" >"$TMP/COMPLETE"
 (cd "$TMP" && sha256sum COMPLETE > COMPLETION.SHA256)

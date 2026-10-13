@@ -1,0 +1,16 @@
+{
+  "project": "mobile_money_corpus_manager_v0_1",
+  "branch": "g9-r3-healthcheck",
+  "commit": "2698530f7a77a6d9222049c0d911f49fb56c36ae",
+  "worktree": "/tmp/g9-r3-healthcheck",
+  "image": "mobile-money-corpus@sha256:9ce9a636481ad7726b62340df0f0d3debcf8ff75153a04245fc564df5a617077",
+  "image_tag": "mobile-money-corpus:2698530f7a77a6d9222049c0d911f49fb56c36ae",
+  "alembic_head": "0008_rate_limit_buckets",
+  "compose": "docker-compose.yml + docker-compose.release.yml",
+  "local_backup": "/home/sangouman/mobile-money-corpus-backups/20261013T043445Z",
+  "tests": "162 passed, 1 skipped, 8 warnings",
+  "rollback_image": "mobile_money_corpus_manager_g8_5_r-app:8f688e8d312b2f0afb30f8a2766a6f8f25e5e5d6",
+  "deployment_status": "deployed_healthy",
+  "public_decision": "PUBLIC_OPEN_NO_GO",
+  "external_backup_status": "EXTERNAL_BACKUP_PENDING_MANUAL_OPERATOR_ACTION"
+}
