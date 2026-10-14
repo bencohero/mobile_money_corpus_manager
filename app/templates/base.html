@@ -13,22 +13,25 @@
 <nav class="top" aria-label="Navigation principale">
   <a class="brand" href="/" aria-label="Accueil Mobile Money Corpus"><span class="brand-mark" aria-hidden="true"></span><span>Corpus<span class="brand-muted"> Studio</span></span></a>
   <div class="nav-main">
-    <a href="/" {% if request.url.path == "/" %}class="active" aria-current="page"{% endif %}>Vue d’ensemble</a>
-    {% if user.role in ["PARTICIPANT","ADMIN"] %}<a href="/record" {% if request.url.path == "/record" %}class="active" aria-current="page"{% endif %}>Enregistrer</a>{% endif %}
-    <a href="/recordings" {% if request.url.path.startswith("/recordings") or request.url.path.startswith("/transcribe") %}class="active" aria-current="page"{% endif %}>Corpus</a>
+    {% if user.role == "PARTICIPANT" %}
+      <a href="/" {% if request.url.path == "/" %}class="active" aria-current="page"{% endif %}>Accueil</a>
+      <a href="/recordings" {% if request.url.path.startswith("/recordings") %}class="active" aria-current="page"{% endif %}>Mes enregistrements</a>
+      <a href="/help" {% if request.url.path == "/help" %}class="active" aria-current="page"{% endif %}>Aide</a>
+    {% else %}
+      <a href="/" {% if request.url.path == "/" %}class="active" aria-current="page"{% endif %}>Vue d’ensemble</a>
+      {% if user.role == "ADMIN" %}<a href="/record" {% if request.url.path == "/record" %}class="active" aria-current="page"{% endif %}>Enregistrer</a>{% endif %}
+      <a href="/recordings" {% if request.url.path.startswith("/recordings") or request.url.path.startswith("/transcribe") %}class="active" aria-current="page"{% endif %}>Corpus</a>
+    {% endif %}
     {% if user.role=="ADMIN" %}<a href="/participants" {% if request.url.path == "/participants" %}class="active" aria-current="page"{% endif %}>Participants</a><a href="/users" {% if request.url.path == "/users" %}class="active" aria-current="page"{% endif %}>Équipe</a><a href="/admin/workshop-codes" {% if request.url.path.startswith("/admin/workshop-codes") %}class="active" aria-current="page"{% endif %}>Ateliers</a>{% endif %}
   </div>
   <div class="nav-actions">
     {% if user.role=="ADMIN" %}<a class="icon-action" href="/admin/export" title="Exporter le corpus" aria-label="Exporter le corpus">↓ <span>Export</span></a>{% endif %}
-    <span class="user-chip"><span class="avatar" aria-hidden="true">{{ user.username[0]|upper }}</span><span><strong>{{ user.username }}</strong><small>{{ user.role }}</small></span></span>
+    <span class="user-chip"><span class="avatar" aria-hidden="true">{{ user.username[0]|upper }}</span><span><strong>{{ user.username }}</strong>{% if user.role != "PARTICIPANT" %}<small>{{ user.role }}</small>{% endif %}</span></span>
     <form method="post" action="/logout" class="logout-form"><button type="submit" class="icon-action" title="Se déconnecter" aria-label="Se déconnecter">↗</button></form>
   </div>
 </nav>
 {% endif %}
 <main id="contenu">{% block content %}{% endblock %}</main>
-<script>
-function cookieValue(name){return document.cookie.split("; ").find(v=>v.startsWith(name+"="))?.split("=").slice(1).join("=")||""}
-document.querySelectorAll("form[method=post]").forEach(form=>{if(!form.querySelector("input[name=csrf_token]")){const input=document.createElement("input");input.type="hidden";input.name="csrf_token";input.value=decodeURIComponent(cookieValue("csrf_token"));form.prepend(input)}});
-</script>
+<script src="/static/base.js" defer></script>
 </body>
 </html>

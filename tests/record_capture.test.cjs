@@ -36,7 +36,7 @@ function browserFixture() {
   sandbox.RecordingCapture.CaptureState = class extends CaptureState {constructor(){super(()=> 'test-capture-key');}};
   vm.createContext(sandbox);
   const html = fs.readFileSync('app/templates/record.html','utf8');
-  const script = html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
+  const script = html.match(/<script[^>]*nonce=[^>]*>\s*([\s\S]*?)<\/script>/)[1];
   vm.runInContext(script, sandbox);
   return {elements, requests, sandbox};
 }

@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from .models import RecordingTakeCounter
+from .time_utils import utc_now
 
 
 class TakeLimitReached(Exception):
@@ -11,7 +12,7 @@ class TakeLimitReached(Exception):
 
 def allocate_next_take(db, participant_id, utterance_id, condition):
     table = RecordingTakeCounter.__table__
-    now = datetime.utcnow()
+    now = utc_now()
     statement = insert(table).values(
         participant_id=participant_id, utterance_id=utterance_id,
         condition=condition, last_take_number=1, created_at=now, updated_at=now,

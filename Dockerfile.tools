@@ -1,5 +1,16 @@
-FROM postgres:16-alpine
-RUN apk add --no-cache bash curl ca-certificates
-RUN curl -fsSL "https://dl.min.io/client/mc/release/linux-amd64/mc" -o /usr/local/bin/mc && chmod 755 /usr/local/bin/mc
+FROM quay.io/minio/aistor/mc@sha256:23511e340cbabf07e6a8b53f9c434975708f22f3c047d6beeddc17bf1a5aed88 AS minio_mc
+
+FROM postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+RUN apk add --no-cache \
+    bash=5.3.9-r1 \
+    ca-certificates=20260909-r0 \
+    coreutils=9.11-r0 \
+    python3=3.14.8-r0
+COPY --from=minio_mc /usr/bin/mc /usr/local/bin/mc
+RUN chmod 755 /usr/local/bin/mc \
+ && python3 --version \
+ && pg_restore --version \
+ && mc --version \
+ && sha256sum --version | head -1
 WORKDIR /workspace
 COPY scripts ./scripts

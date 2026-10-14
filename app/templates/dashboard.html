@@ -1,4 +1,12 @@
 {% extends "base.html" %}{% block content %}
+{% if user.role == "PARTICIPANT" %}
+<header class="page-head participant-welcome"><span class="eyebrow">Accueil</span><h1>Bonjour</h1><p class="muted">Votre identifiant : <strong>{{ participant.participant_code }}</strong></p></header>
+<section class="participant-home card">
+  <p class="progress-count"><strong>{{ participant_recordings }}</strong> enregistrement{{ "s" if participant_recordings != 1 else "" }} envoyé{{ "s" if participant_recordings != 1 else "" }}</p>
+  {% if workshop_open %}<a class="btn primary-action" href="/record">Enregistrer une phrase</a>{% else %}<p class="error" role="alert">Cet atelier est terminé. Aucun nouvel enregistrement n’est possible.</p>{% endif %}
+  <p class="muted"><a href="/help">Besoin d’aide ?</a></p>
+</section>
+{% else %}
 <header class="page-head split-head">
   <div><span class="eyebrow">Vue d’ensemble</span><h1>Bonjour, {{ user.username }}</h1><p class="muted">Voici l’état du corpus et les éléments récemment collectés.</p></div>
   {% if user.role in ["PARTICIPANT","ADMIN"] %}<a class="btn head-action" href="/record">＋ Nouvel enregistrement</a>{% endif %}
@@ -14,4 +22,4 @@
   {% if latest %}<div class="table-wrap"><table><thead><tr><th>Audio</th><th>Participant</th><th>Intent</th><th>Statut</th></tr></thead><tbody>
   {% for r in latest %}<tr><td><a href="/transcribe/{{r.id}}"><strong>{{r.audio_id}}</strong></a></td><td>{{r.participant.participant_code}}</td><td>{{r.utterance.intent}}</td><td><span class="badge status-{{r.status|lower}}">{{r.status}}</span></td></tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="empty-state"><span class="empty-icon" aria-hidden="true">◉</span><h3>Le corpus est encore vide</h3><p>Commencez par enregistrer une première prise audio.</p>{% if user.role in ["PARTICIPANT","ADMIN"] %}<a class="btn" href="/record">Créer un enregistrement</a>{% endif %}</div>{% endif %}
-</section>{% endblock %}
+</section>{% endif %}{% endblock %}

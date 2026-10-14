@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
-from .models import User, Utterance
+from .models import Language, ParticipantLanguageSequence, User, Utterance, Workshop
+from .languages import LANGUAGES
 from .auth import hash_password
 from .config import settings
 
@@ -20,12 +21,22 @@ SEED = [
 ]
 
 def seed(db: Session):
+    for language in LANGUAGES:
+        if not db.get(Language, language.code):
+            db.add(Language(code=language.code, name=language.name, is_active=True))
+        if not db.get(ParticipantLanguageSequence, language.code):
+            db.add(ParticipantLanguageSequence(language_code=language.code, last_number=0))
     if not db.query(User).filter_by(username=settings.admin_username).first():
         db.add(User(
             username=settings.admin_username,
             password_hash=hash_password(settings.admin_password),
             role="ADMIN",
         ))
+    # Keep the historical workshop created by migration 0005 untouched. A
+    # fresh environment still needs one explicitly attributed workshop for
+    # new admin-created participants.
+    if not db.query(Workshop).filter(Workshop.language_code == "MOS", Workshop.is_active.is_(True)).first():
+        db.add(Workshop(name="Atelier principal", language_code="MOS", is_active=True))
     for code,intent,scenario,period,amount,cp,ttype,op in SEED:
         if not db.query(Utterance).filter_by(utterance_code=code).first():
             db.add(Utterance(

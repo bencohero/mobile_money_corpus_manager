@@ -1,162 +1,122 @@
 #!/usr/bin/env bash
-# F5A6: secure, read-only capture of PostgreSQL + MinIO.
-# This script never stops, starts, removes, or recreates a Docker service.
+# Atomic PostgreSQL 16 + MinIO backup. Production uses a validated write freeze;
+# offline_app uses an explicitly attested application stop and writer-path check.
 set -Eeuo pipefail
 umask 077
 
-PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/mobile-money-corpus}"
-BACKUP_ID="${BACKUP_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
-FINAL_DIR="${BACKUP_ROOT}/${BACKUP_ID}"
-BACKUP_DIR="${FINAL_DIR}.incomplete"
-LOCK_FILE="${BACKUP_ROOT}/.f5a6-backup.lock"
-MODE="${BACKUP_MODE:-offline_app}"
-PG_CONTAINER="${PG_CONTAINER:-mobile_money_corpus_manager_v0_1-db-1}"
-MINIO_CONTAINER="${MINIO_CONTAINER:-mobile_money_corpus_manager_v0_1-minio-1}"
-APP_CONTAINER="${APP_CONTAINER:-mobile_money_corpus_manager_v0_1-app-1}"
-EXPECTED_PROJECT="${EXPECTED_PROJECT:-mobile_money_corpus_manager_v0_1}"
-PG_DATABASE="${PG_DATABASE:-corpus}"
-MINIO_BUCKET="${MINIO_BUCKET:-mobile-money-corpus}"
-MC_BIN="${MC_BIN:-mc}"
-MC_SHA256="${MC_SHA256:-}"
-MINIO_ALIAS="${MINIO_ALIAS:-f5a6-source}"
+: "${BACKUP_ROOT:?BACKUP_ROOT is required}"
+: "${BACKUP_MODE:?BACKUP_MODE must be synthetic or production}"
+: "${BACKUP_TARGET_ID:?BACKUP_TARGET_ID is required}"
+: "${PG_CONTAINER:?PG_CONTAINER is required}"
+: "${MINIO_CONTAINER:?MINIO_CONTAINER is required}"
+: "${MINIO_BUCKET:?MINIO_BUCKET is required}"
+: "${MINIO_MC_IMAGE:?MINIO_MC_IMAGE must be pinned by digest}"
 
-die() { printf '[F5A6] ERROR: %s\n' "$*" >&2; exit 1; }
-log() { printf '[F5A6] %s\n' "$*"; }
-need() { command -v "$1" >/dev/null 2>&1 || die "missing command: $1"; }
-json_escape() { python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'; }
+[[ "$BACKUP_ROOT" = /* ]] || { echo "BACKUP_ROOT must be absolute" >&2; exit 2; }
+[[ "$MINIO_MC_IMAGE" == *@sha256:* ]] || { echo "MINIO_MC_IMAGE must include @sha256" >&2; exit 2; }
+case "$BACKUP_MODE:$BACKUP_TARGET_ID" in
+  synthetic:synthetic|offline_app:synthetic) ;;
+  production:mobile_money_corpus_manager_v0_1|offline_app:mobile_money_corpus_manager_v0_1)
+    [[ "${BACKUP_CONFIRM:-}" == PRODUCTION_BACKUP_AUTHORIZED ]] || { echo "Production authorization missing" >&2; exit 2; }
+    [[ "$PG_CONTAINER" == mobile_money_corpus_manager_v0_1-db-1 ]] || { echo "Unexpected production PostgreSQL target" >&2; exit 2; }
+    [[ "$MINIO_CONTAINER" == mobile_money_corpus_manager_v0_1-minio-1 ]] || { echo "Unexpected production MinIO target" >&2; exit 2; }
+    ;;
+  *) echo "Unsupported mode/target" >&2; exit 2 ;;
+esac
 
-[[ "$MODE" == offline_app ]] || die "BACKUP_MODE must be offline_app"
-[[ "${CONFIRM_TARGET:-}" == YES ]] || die "CONFIRM_TARGET=YES required"
-[[ "${OFFLINE_WRITERS_ATTESTED:-}" == YES ]] || die "OFFLINE_WRITERS_ATTESTED=YES required"
-[[ "${BACKUP_APPROVED:-}" == YES ]] || die "BACKUP_APPROVED=YES required; this is a real-backup gate"
-[[ -d "$PROJECT_DIR" ]] || die "project directory not found: $PROJECT_DIR"
-[[ "$BACKUP_DIR" != "$PROJECT_DIR"/* ]] || die "backup destination must not be inside project"
+script_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+case "$BACKUP_ROOT" in "$script_root"|"$script_root"/*) echo "Destination cannot be repository" >&2; exit 2;; esac
+require_image() { local c="$1" e="$2" a; a="$(docker inspect -f '{{.Image}}' "$c")"; [[ -z "$e" || "$a" == "$e" ]] || { echo "Image digest mismatch" >&2; exit 2; }; }
+require_label() { local c="$1" k="$2" e="$3" a; a="$(docker inspect -f "{{index .Config.Labels \"$k\"}}" "$c" 2>/dev/null || true)"; [[ -z "$e" || "$a" == "$e" ]] || { echo "Unexpected target label" >&2; exit 2; }; }
+docker inspect "$PG_CONTAINER" "$MINIO_CONTAINER" >/dev/null
+[[ "$(docker inspect -f '{{.State.Status}}' "$PG_CONTAINER")" == running ]] || { echo "PostgreSQL is not running" >&2; exit 2; }
+[[ "$(docker inspect -f '{{.State.Status}}' "$MINIO_CONTAINER")" == running ]] || { echo "MinIO is not running" >&2; exit 2; }
+require_image "$PG_CONTAINER" "${EXPECTED_PG_IMAGE_ID:-}"
+require_image "$MINIO_CONTAINER" "${EXPECTED_MINIO_IMAGE_ID:-}"
+require_label "$PG_CONTAINER" com.docker.compose.service "${EXPECTED_PG_SERVICE:-}"
+require_label "$MINIO_CONTAINER" com.docker.compose.service "${EXPECTED_MINIO_SERVICE:-}"
 
-for c in docker flock sha256sum find sort awk sed python3 mktemp; do need "$c"; done
-need "$MC_BIN"
-[[ -n "$MC_SHA256" ]] || die "MC_SHA256 must pin the approved MinIO client"
-printf '%s  %s\n' "$MC_SHA256" "$MC_BIN" | sha256sum -c - >/dev/null 2>&1 || die "MinIO client digest mismatch"
-
-mkdir -p "$BACKUP_ROOT"
-exec 9>"$LOCK_FILE"
-flock -n 9 || die "another F5A6 backup is running"
-[[ ! -e "$BACKUP_DIR" && ! -e "$FINAL_DIR" ]] || die "refusing to overwrite existing archive: $FINAL_DIR"
-
-inspect() { docker inspect --format '{{json .}}' "$1"; }
-container_json() { inspect "$1" 2>/dev/null || die "required container is missing: $1"; }
-json_field() { python3 -c 'import json,sys; x=json.load(sys.stdin); print(x.get(sys.argv[1],""))' "$1"; }
-json_nested() { python3 -c 'import json,sys; x=json.load(sys.stdin); [x:=x[k] for k in sys.argv[1].split(".")]; print(str(x).lower() if isinstance(x,bool) else x)' "$1"; }
-
-PG_JSON="$(container_json "$PG_CONTAINER")"
-MINIO_JSON="$(container_json "$MINIO_CONTAINER")"
-APP_JSON="$(inspect "$APP_CONTAINER" 2>/dev/null || true)"
-pg_name="$(printf '%s' "$PG_JSON" | json_field Name)"
-minio_name="$(printf '%s' "$MINIO_JSON" | json_field Name)"
-[[ "$pg_name" == "/$PG_CONTAINER" ]] || die "unexpected PostgreSQL container identity"
-[[ "$minio_name" == "/$MINIO_CONTAINER" ]] || die "unexpected MinIO container identity"
-
-pg_image="$(printf '%s' "$PG_JSON" | json_nested Config.Image)"
-minio_image="$(printf '%s' "$MINIO_JSON" | json_nested Config.Image)"
-[[ "$pg_image" == postgres:16* ]] || die "unexpected PostgreSQL image: $pg_image"
-[[ "$minio_image" == minio/minio:RELEASE.2025-04-22T22-12-26Z ]] || die "unexpected MinIO image: $minio_image"
-
-pg_running="$(printf '%s' "$PG_JSON" | json_nested State.Running)"
-minio_running="$(printf '%s' "$MINIO_JSON" | json_nested State.Running)"
-[[ "$pg_running" == true ]] || die "PostgreSQL is not running"
-[[ "$minio_running" == true ]] || die "MinIO is not running"
-
-if [[ -n "$APP_JSON" ]]; then
-  app_running="$(printf '%s' "$APP_JSON" | json_nested State.Running)"
-  [[ "$app_running" == false ]] || die "application container is active"
-  APP_STATE=APP_STOPPED
-else
-  APP_STATE=APP_ABSENT
+if [[ "$BACKUP_MODE" == offline_app ]]; then
+  : "${APP_CONTAINER:?APP_CONTAINER is required in offline_app mode}"
+  : "${OFFLINE_WRITERS_ATTESTED:?OFFLINE_WRITERS_ATTESTED must be YES in offline_app mode}"
+  [[ "$OFFLINE_WRITERS_ATTESTED" == YES ]] || { echo "Refusing offline backup without writer-path attestation" >&2; exit 2; }
+  docker inspect "$APP_CONTAINER" >/dev/null || { echo "Offline app container is missing" >&2; exit 2; }
+  [[ "$(docker inspect -f '{{.State.Status}}' "$APP_CONTAINER")" =~ ^(exited|dead)$ ]] || {
+    echo "Offline app container is not stopped" >&2; exit 2;
+  }
+  app_project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$APP_CONTAINER" 2>/dev/null || true)"
+  [[ "$app_project" == "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$PG_CONTAINER")" ]] || {
+    echo "Offline app is not in the target Compose project" >&2; exit 2;
+  }
+  running_project_services="$(docker ps -q --filter "label=com.docker.compose.project=$app_project" --filter status=running | wc -l | tr -d ' ')"
+  [[ "$running_project_services" == 2 ]] || {
+    echo "Target Compose project has unexpected running services" >&2; exit 2;
+  }
+  target_volumes="$(docker inspect -f '{{range .Mounts}}{{if .Name}}{{.Name}}{{"\n"}}{{end}}{{end}}' "$PG_CONTAINER" "$MINIO_CONTAINER" | sort -u)"
+  while IFS= read -r volume; do
+    [[ -n "$volume" ]] || continue
+    mounted_elsewhere="$(docker ps -q --filter status=running | while read -r c; do
+      docker inspect -f '{{range .Mounts}}{{if eq .Name "'"$volume"'"}}{{.Name}}{{end}}{{end}}' "$c" 2>/dev/null | grep -qx "$volume" && docker inspect -f '{{.Name}}' "$c"
+    done | grep -v -E "^/$PG_CONTAINER$|^/$MINIO_CONTAINER$" || true)"
+    [[ -z "$mounted_elsewhere" ]] || { echo "Target data volume mounted by another running container: $mounted_elsewhere" >&2; exit 2; }
+  done <<< "$target_volumes"
+  published_ports="$(docker inspect -f '{{json .HostConfig.PortBindings}}' "$PG_CONTAINER" "$MINIO_CONTAINER" | grep -v -E '^(null|\{\})$' || true)"
+  [[ -z "$published_ports" ]] || { echo "Target PostgreSQL/MinIO has a published host port" >&2; exit 2; }
+  write_processes="$(ps -eo pid=,cmd= | grep -E '[u]pload|[t]ranscrib|[r]econcil|[p]g_dump|[p]g_restore|[m]c mirror|[r]clone|[r]estic|[b]org' || true)"
+  [[ -z "$write_processes" ]] || { echo "Potential write/backup process detected: $write_processes" >&2; exit 2; }
+  db_external_sessions="$(docker exec "$PG_CONTAINER" sh -ceu 'psql -Atq -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select count(*) from pg_stat_activity where pid <> pg_backend_pid() and datname = current_database()"')"
+  [[ "$db_external_sessions" == 0 ]] || { echo "PostgreSQL has external sessions: $db_external_sessions" >&2; exit 2; }
 fi
 
-docker exec "$PG_CONTAINER" pg_isready -d "$PG_DATABASE" >/dev/null 2>&1 || die "PostgreSQL health check failed"
-docker exec "$MINIO_CONTAINER" curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1 || die "MinIO health check failed"
-active_sessions="$(docker exec "$PG_CONTAINER" sh -ceu 'psql -U "$POSTGRES_USER" -d "$1" -AtX -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()"' sh "$PG_DATABASE")"
-[[ "$active_sessions" == 0 ]] || die "other PostgreSQL sessions detected: $active_sessions"
+mkdir -m 700 -p "$BACKUP_ROOT"
+exec 9>"$BACKUP_ROOT/.backup.lock"
+flock -n 9 || { echo "Another backup is already running" >&2; exit 2; }
+BACKUP_ID="${BACKUP_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
+FINAL="$BACKUP_ROOT/$BACKUP_ID"
+TMP="$BACKUP_ROOT/.run.$BACKUP_ID.incomplete"
+[[ ! -e "$FINAL" && ! -e "$TMP" ]] || { echo "Destination already exists" >&2; exit 2; }
+mkdir -m 700 -p "$TMP/postgres" "$TMP/minio/$MINIO_BUCKET" "$TMP/manifests" "$TMP/logs"
+mark_incomplete() { local rc=$?; if [[ -d "$TMP" ]]; then printf 'status=INCOMPLETE\nbackup_id=%s\n' "$BACKUP_ID" >"$TMP/INCOMPLETE"; fi; exit "$rc"; }
+trap mark_incomplete EXIT
 
-mkdir -p "$BACKUP_DIR/postgres" "$BACKUP_DIR/minio" "$BACKUP_DIR/manifests" "$BACKUP_DIR/reports"
-incomplete=1
-MC_CONFIG_DIR="$(mktemp -d)"
-cleanup() {
-  rm -rf -- "$MC_CONFIG_DIR"
-  if [[ "$incomplete" == 1 ]]; then log "archive retained incomplete: $BACKUP_DIR" >&2; fi
+docker exec "$PG_CONTAINER" sh -lc 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null
+docker exec "$MINIO_CONTAINER" sh -lc 'curl -fsS http://localhost:9000/minio/health/live >/dev/null'
+docker exec "$PG_CONTAINER" sh -ceu 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >"$TMP/postgres/corpus.dump" 2>"$TMP/logs/postgres.log"
+[[ -s "$TMP/postgres/corpus.dump" ]] || { echo "Empty PostgreSQL dump" >&2; exit 3; }
+docker exec -i "$PG_CONTAINER" pg_restore --list <"$TMP/postgres/corpus.dump" >"$TMP/manifests/postgres_contents.txt" 2>>"$TMP/logs/postgres.log"
+
+MINIO_ROOT_USER="$(docker exec "$MINIO_CONTAINER" sh -lc 'printf "%s" "$MINIO_ROOT_USER"')"
+MINIO_ROOT_PASSWORD="$(docker exec "$MINIO_CONTAINER" sh -lc 'printf "%s" "$MINIO_ROOT_PASSWORD"')"
+[[ -n "$MINIO_ROOT_USER" && -n "$MINIO_ROOT_PASSWORD" ]] || { echo "MinIO credentials unavailable" >&2; exit 2; }
+mc() {
+  docker run --rm --user "$(id -u):$(id -g)" --network "container:$MINIO_CONTAINER" --volume "$TMP/minio:/backup" \
+    --env "MINIO_ROOT_USER=$MINIO_ROOT_USER" --env "MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD" --env HOME=/tmp \
+    --entrypoint /bin/sh "$MINIO_MC_IMAGE" -ceu \
+    'mc alias set source http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; exec mc "$@"' sh "$@"
 }
-trap cleanup EXIT
+mc stat "source/$MINIO_BUCKET" >/dev/null
+mc mirror "source/$MINIO_BUCKET" "/backup/$MINIO_BUCKET" --config-dir /tmp/mc-config \
+  2>"$TMP/logs/minio.log" || { echo "MinIO copy failed" >&2; exit 4; }
+mc ls --recursive --json "source/$MINIO_BUCKET" | wc -l | tr -d ' ' >"$TMP/manifests/minio_source_count.txt"
+find "$TMP/minio/$MINIO_BUCKET" -type f | wc -l | tr -d ' ' >"$TMP/manifests/minio_copy_count.txt"
+[[ "$(cat "$TMP/manifests/minio_source_count.txt")" == "$(cat "$TMP/manifests/minio_copy_count.txt")" ]] || { echo "MinIO object count mismatch" >&2; exit 4; }
 
-log "capturing PostgreSQL custom dump"
-docker exec "$PG_CONTAINER" sh -ceu 'pg_dump -U "$POSTGRES_USER" -d "$1" -Fc' sh "$PG_DATABASE" >"$BACKUP_DIR/postgres/corpus.dump"
-[[ -s "$BACKUP_DIR/postgres/corpus.dump" ]] || die "empty PostgreSQL dump"
-docker exec -i "$PG_CONTAINER" pg_restore --list <"$BACKUP_DIR/postgres/corpus.dump" >"$BACKUP_DIR/manifests/postgres.list"
-cp "$BACKUP_DIR/manifests/postgres.list" "$BACKUP_DIR/postgres.list"
-
-log "capturing MinIO bucket"
-MC_CONFIG_DIR="$MC_CONFIG_DIR" "$MC_BIN" alias set "$MINIO_ALIAS" "${MINIO_ENDPOINT:?MINIO_ENDPOINT required}" "${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY required}" "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY required}" >/dev/null
-MC_CONFIG_DIR="$MC_CONFIG_DIR" "$MC_BIN" stat "$MINIO_ALIAS/$MINIO_BUCKET" >/dev/null
-MC_CONFIG_DIR="$MC_CONFIG_DIR" "$MC_BIN" mirror "$MINIO_ALIAS/$MINIO_BUCKET" "$BACKUP_DIR/minio/$MINIO_BUCKET" >"$BACKUP_DIR/manifests/minio.log" 2>&1
-
-source_objects="$(MC_CONFIG_DIR="$MC_CONFIG_DIR" "$MC_BIN" find "$MINIO_ALIAS/$MINIO_BUCKET" | awk 'NF{n++} END{print n+0}')"
-dest_objects="$(find "$BACKUP_DIR/minio/$MINIO_BUCKET" -type f -print | awk 'NF{n++} END{print n+0}')"
-[[ "$source_objects" == "$dest_objects" ]] || die "MinIO object count mismatch: source=$source_objects destination=$dest_objects"
-export BACKUP_ID APP_STATE PG_CONTAINER MINIO_CONTAINER PG_DATABASE MINIO_BUCKET
-export SOURCE_OBJECTS="$source_objects" DEST_OBJECTS="$dest_objects"
-export MC_SHA256
-
-docker exec "$PG_CONTAINER" sh -ceu 'psql -U "$POSTGRES_USER" -d "$1" -AtX -c "SELECT version()"' sh "$PG_DATABASE" >"$BACKUP_DIR/manifests/postgres_version.txt"
-docker exec "$PG_CONTAINER" sh -ceu 'psql -U "$POSTGRES_USER" -d "$1" -AtX -c "SELECT version_num FROM alembic_version ORDER BY version_num"' sh "$PG_DATABASE" >"$BACKUP_DIR/manifests/alembic_revision.txt"
-grep -Fxq 0005_workshop_attribution "$BACKUP_DIR/manifests/alembic_revision.txt" || die "unexpected Alembic revision"
-
-docker exec "$PG_CONTAINER" sh -ceu 'for table_name in users participants utterances recordings transcriptions audit_logs; do printf "%s|" "$table_name"; psql -U "$POSTGRES_USER" -d "$1" -AtX -c "SELECT count(*) FROM $table_name"; done' sh "$PG_DATABASE" >"$BACKUP_DIR/manifests/table_counts.txt"
-
-docker exec "$PG_CONTAINER" sh -ceu 'psql -U "$POSTGRES_USER" -d "$1" -AtX -c "SELECT raw_object FROM recordings WHERE raw_object IS NOT NULL UNION SELECT wav_object FROM recordings WHERE wav_object IS NOT NULL"' sh "$PG_DATABASE" | sort -u >"$BACKUP_DIR/manifests/referenced_objects.txt"
-find "$BACKUP_DIR/minio/$MINIO_BUCKET" -type f -printf '%P\n' | sort -u >"$BACKUP_DIR/manifests/captured_objects.txt"
-python3 - "$BACKUP_DIR/manifests/referenced_objects.txt" "$BACKUP_DIR/manifests/captured_objects.txt" "$BACKUP_DIR/reports/backup_report.json" <<'PY'
-import json, sys
-refs = {x.strip() for x in open(sys.argv[1], encoding="utf-8") if x.strip()}
-objects = {x.strip() for x in open(sys.argv[2], encoding="utf-8") if x.strip()}
-missing = sorted(refs - objects)
-orphans = sorted(objects - refs)
-report = {
-    "format": "f5a6-report-v1",
-    "referenced_objects": len(refs),
-    "captured_objects": len(objects),
-    "missing_referenced_objects": missing,
-    "orphan_objects": orphans,
-    "coherent": not missing and not orphans,
-}
-with open(sys.argv[3], "w", encoding="utf-8") as f:
-    json.dump(report, f, indent=2, sort_keys=True)
-    f.write("\n")
-if missing or orphans:
-    raise SystemExit("PostgreSQL/MinIO coherence check failed")
+python3 - "$TMP" "$BACKUP_MODE" "$BACKUP_TARGET_ID" "$PG_CONTAINER" "$MINIO_CONTAINER" "$MINIO_BUCKET" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+manifest = {"schema": 2, "status": "COMPLETE", "mode": sys.argv[2], "target_id": sys.argv[3],
+            "postgres_container": sys.argv[4], "minio_container": sys.argv[5], "minio_bucket": sys.argv[6],
+            "postgres_dump": "postgres/corpus.dump", "coherence":
+            "offline_app_stop_and_writer_path_attested" if sys.argv[2] == "offline_app" else "validated_write_freeze_required",
+            "minio_object_count": int((root / "manifests/minio_source_count.txt").read_text())}
+(root / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 PY
-
-python3 - "$BACKUP_DIR/manifests/MANIFEST.json" <<'PY'
-import json, os, sys
-payload = {
-    "format": "f5a6-v1",
-    "backup_id": os.environ["BACKUP_ID"],
-    "app_state": os.environ["APP_STATE"],
-    "postgres_container": os.environ["PG_CONTAINER"],
-    "minio_container": os.environ["MINIO_CONTAINER"],
-    "postgres_database": os.environ["PG_DATABASE"],
-    "minio_bucket": os.environ["MINIO_BUCKET"],
-    "source_objects": int(os.environ["SOURCE_OBJECTS"]),
-    "destination_objects": int(os.environ["DEST_OBJECTS"]),
-    "minio_client_sha256": os.environ["MC_SHA256"],
-}
-with open(sys.argv[1], "w", encoding="utf-8") as f:
-    json.dump(payload, f, sort_keys=True, indent=2)
-    f.write("\n")
-PY
-(cd "$BACKUP_DIR" && { find postgres minio manifests reports -type f ! -name SHA256SUMS -print0; printf '%s\\0' postgres.list; } | sort -z | xargs -0 sha256sum > manifests/SHA256SUMS)
-(cd "$BACKUP_DIR" && sha256sum --check manifests/SHA256SUMS >/dev/null)
-printf 'complete_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$BACKUP_DIR/COMPLETE"
-sha256sum "$BACKUP_DIR/COMPLETE" | awk '{print $1}' >"$BACKUP_DIR/COMPLETION.SHA256"
-mv -- "$BACKUP_DIR" "$FINAL_DIR"
-incomplete=0
-log "backup complete: $FINAL_DIR"
+(cd "$TMP" && find postgres minio manifests MANIFEST.json -type f ! -path 'manifests/SHA256SUMS' -print0 | sort -z | xargs --null --no-run-if-empty sha256sum > manifests/SHA256SUMS)
+(cd "$TMP" && sha256sum --check manifests/SHA256SUMS >/dev/null)
+printf 'status=COMPLETE\nbackup_id=%s\n' "$BACKUP_ID" >"$TMP/COMPLETE"
+(cd "$TMP" && sha256sum COMPLETE > COMPLETION.SHA256)
+(cd "$TMP" && sha256sum --check COMPLETION.SHA256 >/dev/null)
+chmod -R go-rwx "$TMP"
+mv --no-clobber "$TMP" "$FINAL"
+trap - EXIT
+printf 'Backup published: %s\n' "$FINAL"

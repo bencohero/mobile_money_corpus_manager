@@ -1,4 +1,5 @@
 from minio import Minio
+import urllib3
 from .config import settings
 
 # The bundled MinIO service is initialized with MINIO_ROOT_USER/MINIO_ROOT_PASSWORD.
@@ -13,16 +14,29 @@ if not access_key or not secret_key:
         "or MINIO_ROOT_USER/MINIO_ROOT_PASSWORD."
     )
 
+_http_timeout = urllib3.Timeout(connect=3.0, read=3.0)
+_http_client = urllib3.PoolManager(
+    cert_reqs="CERT_REQUIRED" if settings.minio_secure else "CERT_NONE",
+    timeout=_http_timeout,
+    retries=False,
+)
+
 client = Minio(
     settings.minio_endpoint,
     access_key=access_key,
     secret_key=secret_key,
     secure=settings.minio_secure,
+    http_client=_http_client,
 )
 
 def ensure_bucket():
     if not client.bucket_exists(settings.minio_bucket):
         client.make_bucket(settings.minio_bucket)
+
+
+def check_ready() -> bool:
+    """Check MinIO connectivity and bucket availability with bounded client timeouts."""
+    return bool(client.bucket_exists(settings.minio_bucket))
 
 def put_file(object_name: str, path: str, content_type: str):
     size = __import__("os").path.getsize(path)
@@ -68,3 +82,16 @@ def get_bytes(object_name: str) -> bytes:
     finally:
         resp.close()
         resp.release_conn()
+
+
+def stream_file(object_name: str, offset: int = 0, length: int | None = None,
+                chunk_size: int = 1024 * 1024):
+    """Yield an object in bounded chunks and always release the MinIO response."""
+    response = client.get_object(settings.minio_bucket, object_name,
+                                 offset=offset, length=length)
+    try:
+        while chunk := response.read(chunk_size):
+            yield chunk
+    finally:
+        response.close()
+        response.release_conn()

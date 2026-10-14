@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import pytest
 
 from app import corpus_export
+from app.db import SessionLocal
+from app.models import Participant, Workshop
 
 
 class FakeQuery:
@@ -107,8 +109,13 @@ def test_real_http_export_work_and_benchmark_mixed_statuses():
         admin.get("/login")
         csrf = admin.cookies.get("csrf_token")
         assert admin.post("/login", data={"username": "admin", "password": "p0a2-admin-password-only", "csrf_token": csrf}).status_code == 303
-        response = admin.post("/participants", data={"participant_code": code, "username": username, "password": "e2-participant-password", "language": "mos", "consent_obtained": "on", "csrf_token": admin.cookies.get("csrf_token")})
+        with SessionLocal() as db:
+            workshop = Workshop(name=f"Export {suffix}", language_code="MOS")
+            db.add(workshop); db.commit(); workshop_id = workshop.id
+        response = admin.post("/participants", data={"participant_code": code, "username": username, "password": "e2-participant-password", "language": "mos", "consent_obtained": "on", "workshop_id": str(workshop_id), "csrf_token": admin.cookies.get("csrf_token")})
         assert response.status_code == 303
+        with SessionLocal() as db:
+            code = db.query(Participant).filter_by(workshop_id=workshop_id).order_by(Participant.id.desc()).first().participant_code
         page = admin.get("/record").text
         participant_id = re.search(r'<option value="(\d+)">'+re.escape(code)+r'</option>', page).group(1)
         utterance_id = re.search(r'<select id="utterance">.*?<option value="(\d+)"', page, re.S).group(1)
@@ -218,8 +225,13 @@ def test_real_http_export_permissions_and_csrf():
         for role, username, password in (("TRANSCRIBER", transcriber_user, "p0e2-transcriber-password"), ("VALIDATOR", validator_user, "p0e2-validator-password")):
             response = admin.post("/users", data={"username": username, "password": password, "role": role, "csrf_token": admin.cookies.get("csrf_token")})
             assert response.status_code == 303
-        response = admin.post("/participants", data={"participant_code": code, "username": participant_user, "password": "p0e2-participant-password", "language": "mos", "consent_obtained": "on", "csrf_token": admin.cookies.get("csrf_token")})
+        with SessionLocal() as db:
+            workshop = Workshop(name=f"Permissions {suffix}", language_code="MOS")
+            db.add(workshop); db.commit(); workshop_id = workshop.id
+        response = admin.post("/participants", data={"participant_code": code, "username": participant_user, "password": "p0e2-participant-password", "language": "mos", "consent_obtained": "on", "workshop_id": str(workshop_id), "csrf_token": admin.cookies.get("csrf_token")})
         assert response.status_code == 303
+        with SessionLocal() as db:
+            participant_user = db.query(Participant).filter_by(workshop_id=workshop_id).order_by(Participant.id.desc()).first().participant_code
         clients = [httpx.Client(base_url=base, follow_redirects=False, timeout=30) for _ in range(3)]
         try:
             for client, username, password in zip(clients, (participant_user, transcriber_user, validator_user), ("p0e2-participant-password", "p0e2-transcriber-password", "p0e2-validator-password")):

@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from app import main
 from app.db import SessionLocal
-from app.models import Recording
+from app.models import Recording, User
 from app.storage import get_bytes, put_file, delete_file, stat_file
 
 BASE = "http://app-test:8000"
@@ -35,9 +35,64 @@ def wav(seconds):
         f.writeframes(b"\0\0"*int(16000*seconds))
     return out.getvalue()
 
-def remaining_recording():
+def ensure_http_fixture():
+    """Create the negative-test corpus instead of relying on another module's order."""
     with SessionLocal() as db:
-        r=db.query(Recording).order_by(Recording.id.desc()).first()
+        existing = db.query(Recording).join(User, Recording.participant_id == User.participant_id).filter(User.username == "p0a2-participant").first()
+        if existing:
+            return
+    admin = login("admin", os.environ["ADMIN_PASSWORD"])
+    users_page = admin.get("/users").text
+    if "p0a2-participant" not in users_page:
+        response = admin.post("/participants", data={
+            "participant_code": "P0A2_S001",
+            "username": "p0a2-participant",
+            "password": "p0a2-participant-password",
+            "language": "mos",
+            "consent_obtained": "on",
+            "csrf_token": token(admin),
+        })
+        assert response.status_code == 303
+    users_page = admin.get("/users").text
+    if "p0a2-other" not in users_page:
+        response = admin.post("/participants", data={
+            "participant_code": "P0A2_S002",
+            "username": "p0a2-other",
+            "password": "p0a2-other-password",
+            "language": "mos",
+            "consent_obtained": "on",
+            "csrf_token": token(admin),
+        })
+        assert response.status_code == 303
+    for username, password, role in (
+        ("p0a2-transcriber", "p0a2-transcriber-password", "TRANSCRIBER"),
+        ("p0a2-validator", "p0a2-validator-password", "VALIDATOR"),
+    ):
+        if username not in admin.get("/users").text:
+            response = admin.post("/users", data={
+                "username": username,
+                "password": password,
+                "role": role,
+                "csrf_token": token(admin),
+            })
+            assert response.status_code == 303
+    owner = login("p0a2-participant", "p0a2-participant-password")
+    utterance = re.search(r'<option value="(\d+)"', owner.get("/record").text).group(1)
+    response = owner.post(
+        "/api/recordings",
+        data={"utterance_id": utterance, "idempotency_key": uuid.uuid4().hex, "condition": "CLEAN"},
+        files={"audio": ("fixture.wav", wav(.8), "audio/wav")},
+        headers={"X-CSRF-Token": token(owner)},
+    )
+    assert response.status_code == 200, response.text
+    owner.close(); admin.close()
+
+def remaining_recording():
+    ensure_http_fixture()
+    with SessionLocal() as db:
+        owner_id = db.query(User.participant_id).filter(User.username == "p0a2-participant").scalar()
+        r=db.query(Recording).filter(Recording.participant_id == owner_id).order_by(Recording.id.desc()).first()
+        assert r is not None
         return r.id, r.participant_id, r.raw_object, r.wav_object
 
 def test_http_permission_matrix_idor_sessions_and_csrf():
@@ -87,6 +142,7 @@ def test_http_permission_matrix_idor_sessions_and_csrf():
     for c in (admin,owner,tier,trans,validator,anonymous,bad): c.close()
 
 def test_audio_negative_inputs_have_controlled_responses_and_no_ready_rows():
+    ensure_http_fixture()
     c=login("p0a2-participant","p0a2-participant-password")
     utterance=re.search(r'<option value="(\d+)"',c.get("/record").text).group(1)
     cases=[(31,b"","audio/wav",400),(32,b"not audio","audio/wav",422),(33,os.urandom(128),"audio/wav",422),(34,wav(0.05),"audio/wav",422)]
@@ -104,6 +160,7 @@ def test_audio_negative_inputs_have_controlled_responses_and_no_ready_rows():
     c.close()
 
 def test_concurrent_uploads_return_distinct_takes_and_valid_objects():
+    ensure_http_fixture()
     c1=login("p0a2-participant","p0a2-participant-password")
     c2=login("p0a2-participant","p0a2-participant-password")
     utterance=re.search(r'<option value="(\d+)"',c1.get("/record").text).group(1)

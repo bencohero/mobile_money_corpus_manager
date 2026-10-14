@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from fastapi import Request, HTTPException
-from jose import jwt, JWTError
+import jwt
+from jwt.exceptions import InvalidTokenError
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from .config import settings
@@ -17,16 +18,27 @@ def verify_password(password: str, hashed: str) -> bool:
 
 def create_token(user: User) -> str:
     exp = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_minutes)
-    return jwt.encode({"sub": str(user.id), "role": user.role, "exp": exp}, settings.jwt_secret, algorithm=ALGO)
+    return jwt.encode(
+        {"sub": str(user.id), "role": user.role, "exp": exp},
+        settings.jwt_secret,
+        algorithm=ALGO,
+    )
 
 def get_current_user(request: Request, db: Session) -> User:
     token = request.cookies.get("session")
     if not token:
         raise HTTPException(status_code=401)
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[ALGO])
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[ALGO],
+            options={"require": ["exp", "sub", "role"]},
+        )
         user_id = int(payload["sub"])
-    except (JWTError, KeyError, ValueError):
+        if not isinstance(payload["role"], str) or not payload["role"]:
+            raise InvalidTokenError("invalid role claim")
+    except (InvalidTokenError, KeyError, TypeError, ValueError):
         raise HTTPException(status_code=401)
     user = db.get(User, user_id)
     if not user or not user.is_active:

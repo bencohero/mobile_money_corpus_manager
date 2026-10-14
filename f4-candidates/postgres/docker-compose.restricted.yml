@@ -1,0 +1,25 @@
+name: f4-postgres-candidate
+
+# Candidate only. Do not use this file against the live project without approval.
+# Administration is intended through an approved SSH tunnel or private network.
+services:
+  postgres:
+    image: postgres:18
+    container_name: f4-postgres-candidate
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set only in the isolated candidate}
+    volumes:
+      - f4-postgres-data:/var/lib/postgresql
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    networks: [f4-infra]
+    # Deliberately no ports:5432 publication.
+
+networks:
+  f4-infra:
+    name: f4-postgres-candidate-network
+
+volumes:
+  f4-postgres-data:
+    name: f4-postgres-candidate-data

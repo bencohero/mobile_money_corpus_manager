@@ -1,0 +1,13 @@
+{
+  "project": "mobile_money_corpus_manager_v0_1",
+  "commit": "8f688e8d312b2f0afb30f8a2766a6f8f25e5e5d6",
+  "worktree": "/tmp/g9-r2-release-8f688e8",
+  "image": "mobile-money-corpus@sha256:3f13523f19c919b979cbaed70919205811d19d535e9e36077150ce43a96a9417",
+  "compose": "docker-compose.yml + docker-compose.release.yml",
+  "alembic_head": "0008_rate_limit_buckets",
+  "local_backup": "/home/sangouman/mobile-money-corpus-backups/20261013T043445Z",
+  "local_backup_schema": 2,
+  "isolated_restore_network": "g88-a-isolated",
+  "decision": "PUBLIC_OPEN_NO_GO",
+  "external_backup_status": "EXTERNAL_BACKUP_PENDING_MANUAL_OPERATOR_ACTION"
+}

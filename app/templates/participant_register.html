@@ -10,7 +10,7 @@
       <div class="field"><label for="workshop-code">Code d’atelier <span aria-hidden="true">*</span></label><input id="workshop-code" required maxlength="128" autocomplete="one-time-code" autocapitalize="none"></div>
     </fieldset>
     <fieldset><legend>Profil de collecte</legend><div class="form-grid">
-      <div class="field"><label for="language">Langue</label><select id="language"><option value="mos">Mooré</option></select></div>
+      <div class="field"><label for="language">Langue de l’atelier</label><input id="language" type="text" readonly aria-readonly="true" placeholder="Saisissez d’abord le code d’atelier"><small id="workshop-language-help">Déterminée automatiquement par le code d’atelier.</small></div>
       <div class="field"><label for="age-group">Tranche d’âge</label><select id="age-group"><option value="">Non renseignée</option><option>18-24</option><option>25-34</option><option>35-44</option><option>45-54</option><option>55+</option></select></div>
       <div class="field"><label for="gender">Genre</label><select id="gender"><option value="">Non renseigné</option><option value="F">Femme</option><option value="M">Homme</option><option value="OTHER">Autre</option><option value="UNDISCLOSED">Préfère ne pas répondre</option></select></div>
       <div class="field"><label for="region">Région</label><input id="region" maxlength="120" autocomplete="address-level1"></div>
@@ -25,9 +25,9 @@
   <p class="muted centered-text"><a href="/login">J’ai déjà un identifiant</a></p>
 </section>
 <section class="card notice" id="registration-success" tabindex="-1" hidden>
-  <span class="eyebrow">Compte créé</span><h2>Votre compte participant a été créé.</h2>
-  <p>Votre identifiant de connexion est :</p><p class="login-id" id="created-login-id"></p>
-  <p>Conservez cet identifiant. Vous devrez l’utiliser avec votre mot de passe pour vous connecter.</p>
+  <span class="eyebrow">Compte créé</span><h2>Votre compte a été créé</h2>
+  <p>Votre identifiant :</p><p class="login-id" id="created-login-id"></p>
+  <p>Conservez cet identifiant avec votre mot de passe.</p>
   <div class="actions centered"><button type="button" class="secondary" id="copy-login-id">Copier l’identifiant</button><a class="btn" href="/login">Aller à la connexion</a></div>
   <p class="muted" id="copy-status" role="status"></p>
 </section>

@@ -1,0 +1,21 @@
+# E.2 historical migration rehearsal: isolated from E.1 and production.
+services:
+  db-test:
+    volumes:
+      - e2-migration-pgdata:/var/lib/postgresql/data
+  minio-test:
+    volumes:
+      - e2-migration-miniodata:/data
+  test:
+    volumes:
+      - e2-migration-backup:/backup
+networks:
+  p0a2-test:
+    name: mobile-money-corpus-e2-migration
+volumes:
+  e2-migration-pgdata:
+    name: mobile-money-corpus-e2-migration-pgdata
+  e2-migration-miniodata:
+    name: mobile-money-corpus-e2-migration-miniodata
+  e2-migration-backup:
+    name: mobile-money-corpus-e2-migration-backup

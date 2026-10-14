@@ -1,0 +1,7 @@
+# Release overlay: pin the validated application image. Use with docker-compose.yml.
+# Traefik labels, networks, volumes, healthchecks and dependencies remain defined
+# by the repository production Compose file.
+services:
+  app:
+    image: mobile-money-corpus@sha256:9ce9a636481ad7726b62340df0f0d3debcf8ff75153a04245fc564df5a617077
+    build: !reset null

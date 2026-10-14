@@ -1,0 +1,30 @@
+services:
+  db-test:
+    volumes:
+      - g2-migration-pgdata:/var/lib/postgresql/data
+  minio-test:
+    volumes:
+      - g2-migration-miniodata:/data
+  db-restore:
+    volumes:
+      - g2-migration-restore-pgdata:/var/lib/postgresql/data
+  minio-restore:
+    volumes:
+      - g2-migration-restore-miniodata:/data
+  tools:
+    volumes:
+      - g2-migration-backup:/backup
+networks:
+  p0a2-test:
+    name: g2-migration-network
+volumes:
+  g2-migration-pgdata:
+    name: g2-migration-pgdata
+  g2-migration-miniodata:
+    name: g2-migration-miniodata
+  g2-migration-restore-pgdata:
+    name: g2-migration-restore-pgdata
+  g2-migration-restore-miniodata:
+    name: g2-migration-restore-miniodata
+  g2-migration-backup:
+    name: g2-migration-backup
